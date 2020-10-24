@@ -127,6 +127,7 @@ enum {
     COMPILER_SCOPE_ASYNC_FUNCTION,
     COMPILER_SCOPE_LAMBDA,
     COMPILER_SCOPE_COMPREHENSION,
+    COMPILER_SCOPE_ANNOTATION,
 };
 
 /* The following items change on entry and exit of code blocks.
@@ -561,6 +562,30 @@ compiler_unit_free(struct compiler_unit *u)
     PyObject_Free(u);
 }
 
+
+static int
+compiler_push_scope(struct compiler *c, struct compiler_unit *u)
+{
+    /* Push the old compiler_unit on the stack. */
+    if (c->u) {
+        PyObject *capsule = PyCapsule_New(c->u, CAPSULE_NAME, NULL);
+        if (!capsule || PyList_Append(c->c_stack, capsule) < 0) {
+            Py_XDECREF(capsule);
+            return 0;
+        }
+        Py_DECREF(capsule);
+
+        u->u_private = c->u->u_private;
+        Py_XINCREF(u->u_private);
+    }
+
+    c->u = u;
+    c->c_nestlevel++;
+
+    return 1;
+}
+
+
 static int
 compiler_enter_scope(struct compiler *c, identifier name,
                      int scope_type, void *key, int lineno)
@@ -635,43 +660,40 @@ compiler_enter_scope(struct compiler *c, identifier name,
 
     u->u_private = NULL;
 
-    /* Push the old compiler_unit on the stack. */
-    if (c->u) {
-        PyObject *capsule = PyCapsule_New(c->u, CAPSULE_NAME, NULL);
-        if (!capsule || PyList_Append(c->c_stack, capsule) < 0) {
-            Py_XDECREF(capsule);
-            compiler_unit_free(u);
+    if (!compiler_push_scope(c, u)) {
+        compiler_unit_free(u);
+        return 0;
+    }
+
+    if (scope_type != COMPILER_SCOPE_MODULE) {
+        if (!compiler_set_qualname(c)) {
+            /* leak memory, too hard to clean up here */
             return 0;
         }
-        Py_DECREF(capsule);
-        u->u_private = c->u->u_private;
-        Py_XINCREF(u->u_private);
     }
-    c->u = u;
-
-    c->c_nestlevel++;
 
     block = compiler_new_block(c);
-    if (block == NULL)
+    if (block == NULL) {
+        /* leak memory, too hard to clean up here */
         return 0;
-    c->u->u_curblock = block;
-
-    if (u->u_scope_type != COMPILER_SCOPE_MODULE) {
-        if (!compiler_set_qualname(c))
-            return 0;
     }
+    u->u_curblock = block;
 
     return 1;
 }
 
-static void
-compiler_exit_scope(struct compiler *c)
+static struct compiler_unit *
+compiler_pop_scope(struct compiler *c)
 {
     Py_ssize_t n;
+    struct compiler_unit *u;
     PyObject *capsule;
 
+    if (!c->u)
+        return NULL;
+
     c->c_nestlevel--;
-    compiler_unit_free(c->u);
+    u = c->u;
     /* Restore c->u to the parent unit. */
     n = PyList_GET_SIZE(c->c_stack) - 1;
     if (n >= 0) {
@@ -685,7 +707,15 @@ compiler_exit_scope(struct compiler *c)
     }
     else
         c->u = NULL;
+    return u;
+}
 
+
+static void
+compiler_exit_scope(struct compiler *c)
+{
+    struct compiler_unit *u = compiler_pop_scope(c);
+    compiler_unit_free(u);
 }
 
 static int
@@ -2026,7 +2056,10 @@ compiler_visit_argannotation(struct compiler *c, identifier id,
 {
     if (annotation) {
         PyObject *mangled;
-        if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
+        if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            VISIT(c, expr, annotation)
+        }
+        else if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
             VISIT(c, annexpr, annotation)
         }
         else {
@@ -5261,7 +5294,10 @@ compiler_annassign(struct compiler *c, stmt_ty s)
         if (s->v.AnnAssign.simple &&
             (c->u->u_scope_type == COMPILER_SCOPE_MODULE ||
              c->u->u_scope_type == COMPILER_SCOPE_CLASS)) {
-            if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
+            if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+                VISIT(c, expr, s->v.AnnAssign.annotation);
+            }
+            else if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
                 VISIT(c, annexpr, s->v.AnnAssign.annotation)
             }
             else {
