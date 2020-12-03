@@ -166,6 +166,8 @@ struct compiler_unit {
     int u_firstlineno; /* the first lineno of the block */
     int u_lineno;          /* the lineno for the current stmt */
     int u_col_offset;      /* the offset of the current stmt */
+
+    int  u_co_annotations;        /* we're processing co_annotations right now */
 };
 
 /* This struct captures the global state of a compilation.
@@ -593,6 +595,15 @@ compiler_enter_scope(struct compiler *c, identifier name,
     struct compiler_unit *u;
     basicblock *block;
 
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf(">> compiler_enter_scope name \"%ls\" -> key %p\n", buffer, key); // REMOVE ME
+// }
+
     u = (struct compiler_unit *)PyObject_Calloc(1, sizeof(
                                             struct compiler_unit));
     if (!u) {
@@ -608,6 +619,9 @@ compiler_enter_scope(struct compiler *c, identifier name,
         compiler_unit_free(u);
         return 0;
     }
+
+    // printf("                             -> ste %p\n", u->u_ste); // REMOVE ME// TODO REMOVE ME
+
     Py_INCREF(name);
     u->u_name = name;
     u->u_varnames = list2dict(u->u_ste->ste_varnames);
@@ -647,6 +661,9 @@ compiler_enter_scope(struct compiler *c, identifier name,
     u->u_firstlineno = lineno;
     u->u_lineno = 0;
     u->u_col_offset = 0;
+
+    u->u_co_annotations = 0;
+
     u->u_consts = PyDict_New();
     if (!u->u_consts) {
         compiler_unit_free(u);
@@ -715,6 +732,7 @@ static void
 compiler_exit_scope(struct compiler *c)
 {
     struct compiler_unit *u = compiler_pop_scope(c);
+    // printf("<< compiler_exit_scope\n"); // REMOVE ME
     compiler_unit_free(u);
 }
 
@@ -2050,13 +2068,49 @@ compiler_visit_annexpr(struct compiler *c, expr_ty annotation)
     return 1;
 }
 
+static PyObject *dot_co_annotations = NULL;
+
+static int
+compiler_enter_co_annotations_scope(struct compiler *c, identifier name, void *key, int lineno)
+{
+    if (c->u->u_co_annotations)
+        return 1;
+
+    int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
+
+    if (co_annotations) {
+        if (dot_co_annotations == NULL) {
+            dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
+            if (!dot_co_annotations)
+                return 0;
+        }
+
+        PyObject *name_dot_co_annotations = PyUnicode_Concat(name, dot_co_annotations);
+
+        if (!compiler_enter_scope(c, name_dot_co_annotations, COMPILER_SCOPE_ANNOTATION, key, lineno))
+            return 0;
+        c->u->u_co_annotations = 1;
+    }
+    return 1;
+}
+
+static int
+compiler_exit_co_annotations_scope(struct compiler *c)
+{
+    if (c->u->u_co_annotations)
+        compiler_exit_scope(c);
+    return 1;
+}
+
 static int
 compiler_visit_argannotation(struct compiler *c, identifier id,
-    expr_ty annotation, PyObject *names)
+    expr_ty annotation, PyObject *names, identifier name, void *key, int lineno)
 {
     if (annotation) {
         PyObject *mangled;
         if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            if (!compiler_enter_co_annotations_scope(c, name, key, lineno))
+                return 0;
             VISIT(c, expr, annotation)
         }
         else if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
@@ -2079,24 +2133,30 @@ compiler_visit_argannotation(struct compiler *c, identifier id,
 
 static int
 compiler_visit_argannotations(struct compiler *c, asdl_arg_seq* args,
-                              PyObject *names)
+                              PyObject *names, identifier name, void *key, int lineno)
 {
     int i;
-    for (i = 0; i < asdl_seq_LEN(args); i++) {
+    int length = asdl_seq_LEN(args);
+    if (!length) {
+        return 1;
+    }
+    if (!compiler_enter_co_annotations_scope(c, name, key, lineno))
+        return 0;
+    for (i = 0; i < length; i++) {
         arg_ty arg = (arg_ty)asdl_seq_GET(args, i);
         if (!compiler_visit_argannotation(
                         c,
                         arg->arg,
                         arg->annotation,
-                        names))
+                        names, name, key, lineno))
             return 0;
     }
     return 1;
 }
 
 static int
-compiler_visit_annotations(struct compiler *c, arguments_ty args,
-                           expr_ty returns)
+compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty args,
+                           expr_ty returns, void *key, int lineno)
 {
     /* Push arg annotation dict.
        The expressions are evaluated out-of-order wrt the source code.
@@ -2110,19 +2170,21 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args,
     if (!names)
         return 0;
 
-    if (!compiler_visit_argannotations(c, args->args, names))
+    int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
+
+    if (!compiler_visit_argannotations(c, args->args, names, name, key, lineno))
         goto error;
-    if (!compiler_visit_argannotations(c, args->posonlyargs, names))
+    if (!compiler_visit_argannotations(c, args->posonlyargs, names, name, key, lineno))
         goto error;
     if (args->vararg && args->vararg->annotation &&
         !compiler_visit_argannotation(c, args->vararg->arg,
-                                     args->vararg->annotation, names))
+                                     args->vararg->annotation, names, name, key, lineno))
         goto error;
-    if (!compiler_visit_argannotations(c, args->kwonlyargs, names))
+    if (!compiler_visit_argannotations(c, args->kwonlyargs, names, name, key, lineno))
         goto error;
     if (args->kwarg && args->kwarg->annotation &&
         !compiler_visit_argannotation(c, args->kwarg->arg,
-                                     args->kwarg->annotation, names))
+                                     args->kwarg->annotation, names, name, key, lineno))
         goto error;
 
     if (!return_str) {
@@ -2130,7 +2192,8 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args,
         if (!return_str)
             goto error;
     }
-    if (!compiler_visit_argannotation(c, return_str, returns, names)) {
+
+    if (!compiler_visit_argannotation(c, return_str, returns, names, name, key, lineno)) {
         goto error;
     }
 
@@ -2140,9 +2203,18 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args,
         Py_DECREF(names);
         ADDOP_LOAD_CONST_NEW(c, keytuple);
         ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
+        if (co_annotations) {
+            ADDOP(c, RETURN_VALUE);
+            PyCodeObject *co = assemble(c, 0);
+            compiler_exit_co_annotations_scope(c);
+            ADDOP_LOAD_CONST(c, (PyObject*)co);
+        }
         return 1;
     }
     else {
+        if (co_annotations) {
+            compiler_exit_co_annotations_scope(c);
+        }
         Py_DECREF(names);
         return -1;
     }
@@ -2284,7 +2356,7 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
         return 0;
     }
 
-    annotations = compiler_visit_annotations(c, args, returns);
+    annotations = compiler_visit_annotations(c, name, args, returns, (void *)args, firstlineno);
     if (annotations == 0) {
         return 0;
     }
@@ -2309,6 +2381,7 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
     c->u->u_posonlyargcount = asdl_seq_LEN(args->posonlyargs);
     c->u->u_kwonlyargcount = asdl_seq_LEN(args->kwonlyargs);
     VISIT_SEQ_IN_SCOPE(c, stmt, body);
+
     co = assemble(c, 1);
     qualname = c->u->u_qualname;
     Py_INCREF(qualname);
@@ -3663,6 +3736,17 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         }
         break;
     }
+
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("compiler_nameop \"%ls\" -> scope %d -> op %d -> name %p ", buffer, scope, op, name);
+//     PyUnicode_AsUCS4(mangled, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("-> mangled \"%ls\"\n", buffer);
+// }
 
     assert(op);
     arg = compiler_add_o(dict, mangled);

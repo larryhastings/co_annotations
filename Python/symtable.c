@@ -92,6 +92,7 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
     ste->ste_needs_class_closure = 0;
     ste->ste_comp_iter_target = 0;
     ste->ste_comp_iter_expr = 0;
+    ste->ste_annotations = 0;
 
     ste->ste_symbols = PyDict_New();
     ste->ste_varnames = PyList_New(0);
@@ -101,6 +102,7 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
         || ste->ste_children == NULL)
         goto fail;
 
+    // printf("ste_new: key %p -> ste %p\n", key, ste); // REMOVE ME
     if (PyDict_SetItem(st->st_blocks, ste->ste_id, (PyObject *)ste) < 0)
         goto fail;
 
@@ -203,15 +205,15 @@ static int symtable_visit_alias(struct symtable *st, alias_ty);
 static int symtable_visit_comprehension(struct symtable *st, comprehension_ty);
 static int symtable_visit_keyword(struct symtable *st, keyword_ty);
 static int symtable_visit_params(struct symtable *st, asdl_arg_seq *args);
-static int symtable_visit_argannotations(struct symtable *st, asdl_arg_seq *args);
+static int symtable_visit_argannotations(struct symtable *st, asdl_arg_seq *args, PyObject *ste_name, void *key);
 static int symtable_implicit_arg(struct symtable *st, int pos);
-static int symtable_visit_annotations(struct symtable *st, arguments_ty, expr_ty);
+static int symtable_visit_annotations(struct symtable *st, arguments_ty, expr_ty, PyObject *ste_name);
 static int symtable_visit_withitem(struct symtable *st, withitem_ty item);
 
 
 static identifier top = NULL, lambda = NULL, genexpr = NULL,
     listcomp = NULL, setcomp = NULL, dictcomp = NULL,
-    __class__ = NULL;
+    __class__ = NULL, dot_co_annotations = NULL;
 
 #define GET_IDENTIFIER(VAR) \
     ((VAR) ? (VAR) : ((VAR) = PyUnicode_InternFromString(# VAR)))
@@ -403,6 +405,7 @@ int
 PyST_GetScope(PySTEntryObject *ste, PyObject *name)
 {
     long symbol = _PyST_GetSymbol(ste, name);
+    // printf("PyST_GetScope(ste %p, symbols %p, name %p) -> %ld\n", ste, ste->ste_symbols, name, symbol);
     return (symbol >> SCOPE_OFFSET) & SCOPE_MASK;
 }
 
@@ -498,6 +501,16 @@ analyze_name(PySTEntryObject *ste, PyObject *scopes, PyObject *name, long flags,
              PyObject *bound, PyObject *local, PyObject *free,
              PyObject *global)
 {
+
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("analyze_name(ste %p, scopes %p, name %p \"%ls\", flags %ld)\n", ste, scopes, name, buffer, flags);
+// }
+
     if (flags & DEF_GLOBAL) {
         if (flags & DEF_NONLOCAL) {
             PyErr_Format(PyExc_SyntaxError,
@@ -505,6 +518,7 @@ analyze_name(PySTEntryObject *ste, PyObject *scopes, PyObject *name, long flags,
                          name);
             return error_at_directive(ste, name);
         }
+        // printf("             hey! we're setting GLOBAL EXPLICIT (%d)\n", GLOBAL_EXPLICIT); // REMOVE ME
         SET_SCOPE(scopes, name, GLOBAL_EXPLICIT);
         if (PySet_Add(global, name) < 0)
             return 0;
@@ -638,6 +652,14 @@ update_symbols(PyObject *symbols, PyObject *scopes,
         assert(v_scope && PyLong_Check(v_scope));
         scope = PyLong_AS_LONG(v_scope);
         flags |= (scope << SCOPE_OFFSET);
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//         printf("update_symbols  symbols %p scopes %p name \"%ls\" -> flags %ld \n", symbols, scopes, buffer, flags); // REMOVE ME
+// }
         v_new = PyLong_FromLong(flags);
         if (!v_new)
             return 0;
@@ -742,6 +764,8 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     PyObject *temp;
     int i, success = 0;
     Py_ssize_t pos = 0;
+
+    // printf(">> analyze_block ste %p\n", ste); // REMOVE ME
 
     local = PySet_New(NULL);  /* collect new names bound in block */
     if (!local)
@@ -879,6 +903,7 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     Py_XDECREF(allfree);
     if (!success)
         assert(PyErr_Occurred());
+    // printf("<< analyze_block ste %p done.\n", ste); // REMOVE ME
     return success;
 }
 
@@ -961,6 +986,7 @@ symtable_exit_block(struct symtable *st)
         if (--size)
             st->st_cur = (PySTEntryObject *)PyList_GET_ITEM(st->st_stack, size - 1);
     }
+    // printf("symtable_exit_block\n"); // REMOVE ME
     return 1;
 }
 
@@ -995,6 +1021,7 @@ symtable_enter_block(struct symtable *st, identifier name, _Py_block_ty block,
             return 0;
         }
     }
+    // printf("symtable_enter_block\n"); // REMOVE ME
     return 1;
 }
 
@@ -1016,6 +1043,15 @@ symtable_add_def_helper(struct symtable *st, PyObject *name, int flag, struct _s
     PyObject *dict;
     long val;
     PyObject *mangled = _Py_Mangle(st->st_private, name);
+
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("add_def helper ste %p symbols %p name \"%ls\" flag %d\n", ste, ste->ste_symbols, buffer, flag); // REMOVE ME
+// }
 
 
     if (!mangled)
@@ -1055,6 +1091,15 @@ symtable_add_def_helper(struct symtable *st, PyObject *name, int flag, struct _s
         }
         val |= DEF_COMP_ITER;
     }
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("               \"%ls\" flag %d, we decided val is %ld\n", buffer, flag, val);
+// }
+
     o = PyLong_FromLong(val);
     if (o == NULL)
         goto error;
@@ -1067,7 +1112,7 @@ symtable_add_def_helper(struct symtable *st, PyObject *name, int flag, struct _s
     if (flag & DEF_PARAM) {
         if (PyList_Append(ste->ste_varnames, mangled) < 0)
             goto error;
-    } else      if (flag & DEF_GLOBAL) {
+    } else if ((flag & DEF_GLOBAL) && (!(flag & USE))) {
         /* XXX need to update DEF_GLOBAL for other flags too;
            perhaps only DEF_FREE_GLOBAL */
         val = flag;
@@ -1107,11 +1152,17 @@ symtable_add_def(struct symtable *st, PyObject *name, int flag) {
    first adjusts current recursion counter depth.
 */
 
+typedef int (*symtable_visit_fn_t)(struct symtable *st, expr_ty e);
+
 #define VISIT_QUIT(ST, X) \
     return --(ST)->recursion_depth,(X)
 
 #define VISIT(ST, TYPE, V) \
     if (!symtable_visit_ ## TYPE((ST), (V))) \
+        VISIT_QUIT((ST), 0);
+
+#define VISIT_FN(ST, FN, V) \
+    if (!(FN)((ST), (V))) \
         VISIT_QUIT((ST), 0);
 
 #define VISIT_SEQ(ST, TYPE, SEQ) { \
@@ -1184,7 +1235,8 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         if (s->v.FunctionDef.args->kw_defaults)
             VISIT_SEQ_WITH_NULL(st, expr, s->v.FunctionDef.args->kw_defaults);
         if (!symtable_visit_annotations(st, s->v.FunctionDef.args,
-                                        s->v.FunctionDef.returns))
+                                        s->v.FunctionDef.returns,
+                                        s->v.FunctionDef.name))
             VISIT_QUIT(st, 0);
         if (s->v.FunctionDef.decorator_list)
             VISIT_SEQ(st, expr, s->v.FunctionDef.decorator_list);
@@ -1402,7 +1454,8 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
             VISIT_SEQ_WITH_NULL(st, expr,
                                 s->v.AsyncFunctionDef.args->kw_defaults);
         if (!symtable_visit_annotations(st, s->v.AsyncFunctionDef.args,
-                                        s->v.AsyncFunctionDef.returns))
+                                        s->v.AsyncFunctionDef.returns,
+                                        s->v.AsyncFunctionDef.name))
             VISIT_QUIT(st, 0);
         if (s->v.AsyncFunctionDef.decorator_list)
             VISIT_SEQ(st, expr, s->v.AsyncFunctionDef.decorator_list);
@@ -1525,7 +1578,7 @@ symtable_handle_namedexpr(struct symtable *st, expr_ty e)
 }
 
 static int
-symtable_visit_expr(struct symtable *st, expr_ty e)
+symtable_visit_expr1(struct symtable *st, expr_ty e, int force_global)
 {
     if (++st->recursion_depth > st->recursion_limit) {
         PyErr_SetString(PyExc_RecursionError,
@@ -1645,8 +1698,25 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
             VISIT(st, expr, e->v.Slice.step)
         break;
     case Name_kind:
-        if (!symtable_add_def(st, e->v.Name.id,
-                              e->v.Name.ctx == Load ? USE : DEF_LOCAL))
+    {
+        int flag;
+        if (force_global) {
+            assert(e->v.Name.ctx == Load);
+            flag = DEF_GLOBAL | USE;
+
+// {
+//     // TODO REMOVE ME
+//     Py_UCS4 buffer[256];
+//     buffer[0] = 0;
+
+//     PyUnicode_AsUCS4(e->v.Name.id, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
+//     printf("symtable_visit_expr \"%ls\" flag is forced to DEF_GLOBAL %d\n", buffer, flag);
+// }
+
+        } else {
+            flag = (e->v.Name.ctx == Load) ? USE : DEF_LOCAL;
+        }
+       if (!symtable_add_def(st, e->v.Name.id, flag))
             VISIT_QUIT(st, 0);
         /* Special-case super: it counts as a use of __class__ */
         if (e->v.Name.ctx == Load &&
@@ -1657,6 +1727,7 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
                 VISIT_QUIT(st, 0);
         }
         break;
+    }
     /* child nodes of List and Tuple will have expr_context set */
     case List_kind:
         VISIT_SEQ(st, expr, e->v.List.elts);
@@ -1667,6 +1738,21 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
     }
     VISIT_QUIT(st, 1);
 }
+
+static int
+symtable_visit_expr(struct symtable *st, expr_ty e)
+{
+    return symtable_visit_expr1(st, e, 0);
+}
+
+
+static int
+symtable_visit_global_expr(struct symtable *st, expr_ty e)
+{
+    // printf("symtable_visit_global_expr()\n");
+    return symtable_visit_expr1(st, e, 1);
+}
+
 
 static int
 symtable_implicit_arg(struct symtable *st, int pos)
@@ -1700,7 +1786,57 @@ symtable_visit_params(struct symtable *st, asdl_arg_seq *args)
 }
 
 static int
-symtable_visit_argannotations(struct symtable *st, asdl_arg_seq *args)
+symtable_enter_co_annotations(struct symtable *st, expr_ty s, PyObject *ste_name, void *key)
+{
+    if ((st->st_cur->ste_annotations) || !(st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS))
+        return 1;
+
+    if (dot_co_annotations == NULL) {
+        dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
+        if (!dot_co_annotations)
+            return 0;
+    }
+
+    PyObject *name_dot_co_annotations = PyUnicode_Concat(ste_name, dot_co_annotations);
+    if (!name_dot_co_annotations)
+        return 0;
+
+
+    if (!symtable_add_def(st, name_dot_co_annotations, DEF_LOCAL))
+        return 0;
+
+    if (!symtable_enter_block(st, name_dot_co_annotations,
+                              FunctionBlock, key, s->lineno,
+                              s->col_offset))
+        return 0;
+
+    st->st_cur->ste_annotations = 1;
+
+// printf(">> symtable_enter_co_annotations: ste_annotations is now set.\n"); // REMOVE ME
+    return 1;
+}
+
+static int
+symtable_exit_co_annotations(struct symtable *st)
+{
+    if (!st->st_cur->ste_annotations)
+        return 1;
+
+// printf("<< symtable_exit_co_annotations: now exiting symbol block where co_annotations was set, turning it off.\n");//  REMOVE ME
+
+    if (!symtable_exit_block(st))
+        VISIT_QUIT(st, 0);
+
+    st->st_cur->ste_annotations = 0;
+    return 1;
+}
+
+#define VISIT_ANNOTATION(st, e) \
+    VISIT_FN((st), (st->st_cur->ste_annotations) ? symtable_visit_global_expr : symtable_visit_expr, (e))
+
+
+static int
+symtable_visit_argannotations(struct symtable *st, asdl_arg_seq *args, PyObject *ste_name, void *key)
 {
     int i;
 
@@ -1709,29 +1845,49 @@ symtable_visit_argannotations(struct symtable *st, asdl_arg_seq *args)
 
     for (i = 0; i < asdl_seq_LEN(args); i++) {
         arg_ty arg = (arg_ty)asdl_seq_GET(args, i);
-        if (arg->annotation)
-            VISIT(st, expr, arg->annotation);
+        if (arg->annotation) {
+            if (!symtable_enter_co_annotations(st, arg->annotation, ste_name, key))
+                return 0;
+            VISIT_ANNOTATION(st, arg->annotation);
+        }
     }
 
     return 1;
 }
 
 static int
-symtable_visit_annotations(struct symtable *st, arguments_ty a, expr_ty returns)
+symtable_visit_annotations(struct symtable *st, arguments_ty a, expr_ty returns, PyObject *ste_name)
 {
-    if (a->posonlyargs && !symtable_visit_argannotations(st, a->posonlyargs))
+    void *key = (void *)a;
+    int return_value = 0;
+    // printf(">> symtable_visit_annotations STARTING\n");
+    if (a->posonlyargs && !symtable_visit_argannotations(st, a->posonlyargs, ste_name, key))
         return 0;
-    if (a->args && !symtable_visit_argannotations(st, a->args))
-        return 0;
-    if (a->vararg && a->vararg->annotation)
-        VISIT(st, expr, a->vararg->annotation);
-    if (a->kwarg && a->kwarg->annotation)
-        VISIT(st, expr, a->kwarg->annotation);
-    if (a->kwonlyargs && !symtable_visit_argannotations(st, a->kwonlyargs))
-        return 0;
-    if (returns)
-        VISIT(st, expr, returns);
-    return 1;
+    if (a->args && !symtable_visit_argannotations(st, a->args, ste_name, key))
+        goto exit;
+
+    if (a->vararg && a->vararg->annotation) {
+        if (!symtable_enter_co_annotations(st, a->vararg->annotation, ste_name, key))
+            goto exit;
+        VISIT_ANNOTATION(st, a->vararg->annotation);
+    }
+    if (a->kwarg && a->kwarg->annotation) {
+        if (!symtable_enter_co_annotations(st, a->kwarg->annotation, ste_name, key))
+            goto exit;
+        VISIT_ANNOTATION(st, a->kwarg->annotation);
+    }
+    if (a->kwonlyargs && !symtable_visit_argannotations(st, a->kwonlyargs, ste_name, key))
+        goto exit;
+    if (returns) {
+        if (!symtable_enter_co_annotations(st, returns, ste_name, key))
+            goto exit;
+        VISIT_ANNOTATION(st, returns);
+    }
+    return_value = 1;
+exit:
+    // printf(">> symtable_visit_annotations FINISHED\n");
+    symtable_exit_co_annotations(st);
+    return return_value;
 }
 
 static int

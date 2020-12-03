@@ -37,13 +37,13 @@ struct symtable {
 
 typedef struct _symtable_entry {
     PyObject_HEAD
-    PyObject *ste_id;        /* int: key in ste_table->st_blocks */
-    PyObject *ste_symbols;   /* dict: variable names to flags */
-    PyObject *ste_name;      /* string: name of current block */
-    PyObject *ste_varnames;  /* list of function parameters */
-    PyObject *ste_children;  /* list of child blocks */
-    PyObject *ste_directives;/* locations of global and nonlocal statements */
-    _Py_block_ty ste_type;   /* module, class, or function */
+    PyObject *ste_id;         /* int: key in ste_table->st_blocks */
+    PyObject *ste_symbols;    /* dict: variable names to flags */
+    PyObject *ste_name;       /* string: name of current block */
+    PyObject *ste_varnames;   /* list of function parameters */
+    PyObject *ste_children;   /* list of child blocks */
+    PyObject *ste_directives; /* locations of global and nonlocal statements */
+    _Py_block_ty ste_type;    /* module, class, or function */
     int ste_nested;      /* true if block is nested */
     unsigned ste_free : 1;        /* true if block has free variables */
     unsigned ste_child_free : 1;  /* true if a child block has free vars,
@@ -59,6 +59,7 @@ typedef struct _symtable_entry {
                                              closure over __class__
                                              should be created */
     unsigned ste_comp_iter_target : 1; /* true if visiting comprehension target */
+    unsigned ste_annotations;/* are we currently generating co_annotations for a fn? */
     int ste_comp_iter_expr; /* non-zero if visiting a comprehension range expression */
     int ste_lineno;          /* first line of block */
     int ste_col_offset;      /* offset of first line of block */

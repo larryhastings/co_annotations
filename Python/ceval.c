@@ -3848,7 +3848,7 @@ main_loop:
                 func ->func_closure = POP();
             }
             if (oparg & 0x04) {
-                assert(PyDict_CheckExact(TOP()));
+                assert(PyDict_CheckExact(TOP()) or (TOP()->ob_type == PyCode_Type));
                 func->func_annotations = POP();
             }
             if (oparg & 0x02) {
