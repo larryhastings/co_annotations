@@ -49,6 +49,7 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->func_dict = NULL;
     op->func_module = NULL;
     op->func_annotations = NULL;
+    op->func_co_annotations = NULL;
 
     /* __module__: If module name is in globals, use it.
        Otherwise, use None. */
@@ -200,6 +201,19 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
     return 0;
 }
 
+
+static inline void
+evaluate_co_annotations(PyFunctionObject *func)
+{
+    assert(!(func->func_annotations && func->func_co_annotations));
+    if ((!func->func_annotations) && func->func_co_annotations) {
+        PyObject *fn = PyFunction_New(func->func_co_annotations, func->func_globals);
+        PyObject *annotations = PyObject_CallFunction(fn, NULL);
+        func->func_annotations = annotations;
+        Py_CLEAR(func->func_co_annotations);
+    }
+}
+
 PyObject *
 PyFunction_GetAnnotations(PyObject *op)
 {
@@ -207,6 +221,7 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
+    evaluate_co_annotations((PyFunctionObject *)op);
     return ((PyFunctionObject *) op) -> func_annotations;
 }
 
@@ -217,6 +232,7 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
         PyErr_BadInternalCall();
         return -1;
     }
+    Py_CLEAR(((PyFunctionObject *)op)->func_co_annotations);
     if (annotations == Py_None)
         annotations = NULL;
     else if (annotations && PyDict_Check(annotations)) {
@@ -416,6 +432,7 @@ func_set_kwdefaults(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignor
 static PyObject *
 func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
+    evaluate_co_annotations(op);
     if (op->func_annotations == NULL) {
         op->func_annotations = PyDict_New();
         if (op->func_annotations == NULL)
@@ -428,6 +445,7 @@ func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 static int
 func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
+    Py_CLEAR(op->func_co_annotations);
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_annotations.
@@ -443,6 +461,31 @@ func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(igno
     return 0;
 }
 
+static PyObject *
+func_get_co_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
+{
+    if (!op->func_co_annotations) {
+        Py_RETURN_NONE;
+    }
+    Py_INCREF(op->func_co_annotations);
+    return op->func_co_annotations;
+}
+
+static int
+func_set_co_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
+{
+    if (value == Py_None)
+        value = NULL;
+    if ((value != NULL) && (value->ob_type != &PyCode_Type)) {
+        PyErr_SetString(PyExc_TypeError,
+            "__co_annotations__ must be set to a code object");
+        return -1;
+    }
+    Py_XINCREF(value);
+    Py_XSETREF(op->func_co_annotations, value);
+    return 0;
+}
+
 static PyGetSetDef func_getsetlist[] = {
     {"__code__", (getter)func_get_code, (setter)func_set_code},
     {"__defaults__", (getter)func_get_defaults,
@@ -454,6 +497,8 @@ static PyGetSetDef func_getsetlist[] = {
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict},
     {"__name__", (getter)func_get_name, (setter)func_set_name},
     {"__qualname__", (getter)func_get_qualname, (setter)func_set_qualname},
+    {"__co_annotations__", (getter)func_get_co_annotations,
+     (setter)func_set_co_annotations},
     {NULL} /* Sentinel */
 };
 
@@ -579,6 +624,7 @@ func_clear(PyFunctionObject *op)
     Py_CLEAR(op->func_closure);
     Py_CLEAR(op->func_annotations);
     Py_CLEAR(op->func_qualname);
+    Py_CLEAR(op->func_co_annotations);
     return 0;
 }
 
@@ -614,6 +660,7 @@ func_traverse(PyFunctionObject *f, visitproc visit, void *arg)
     Py_VISIT(f->func_closure);
     Py_VISIT(f->func_annotations);
     Py_VISIT(f->func_qualname);
+    Py_VISIT(f->func_co_annotations);
     return 0;
 }
 

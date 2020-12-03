@@ -2097,8 +2097,9 @@ compiler_enter_co_annotations_scope(struct compiler *c, identifier name, void *k
 static int
 compiler_exit_co_annotations_scope(struct compiler *c)
 {
-    if (c->u->u_co_annotations)
-        compiler_exit_scope(c);
+    if (!c->u->u_co_annotations)
+        return 0;
+    compiler_exit_scope(c);
     return 1;
 }
 
@@ -2171,6 +2172,8 @@ compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty arg
         return 0;
 
     int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
+    int annotations_fn_flag = (co_annotations) ? 0x10 : 0x04;
+    int return_value = 0;
 
     if (!compiler_visit_argannotations(c, args->args, names, name, key, lineno))
         goto error;
@@ -2197,31 +2200,27 @@ compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty arg
         goto error;
     }
 
+    return_value = -1;
     len = PyList_GET_SIZE(names);
     if (len) {
         PyObject *keytuple = PyList_AsTuple(names);
-        Py_DECREF(names);
         ADDOP_LOAD_CONST_NEW(c, keytuple);
         ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
-        if (co_annotations) {
-            ADDOP(c, RETURN_VALUE);
-            PyCodeObject *co = assemble(c, 0);
-            compiler_exit_co_annotations_scope(c);
-            ADDOP_LOAD_CONST(c, (PyObject*)co);
-        }
-        return 1;
+        return_value = annotations_fn_flag;
     }
-    else {
-        if (co_annotations) {
-            compiler_exit_co_annotations_scope(c);
-        }
-        Py_DECREF(names);
-        return -1;
+    Py_DECREF(names);
+
+    if (c->u->u_co_annotations) {
+        ADDOP(c, RETURN_VALUE);
+        PyCodeObject *co = assemble(c, 0);
+        compiler_exit_co_annotations_scope(c);
+        ADDOP_LOAD_CONST(c, (PyObject*)co);
+        return_value = annotations_fn_flag;
     }
 
 error:
     Py_DECREF(names);
-    return 0;
+    return return_value;
 }
 
 static int
@@ -2314,7 +2313,7 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
     asdl_expr_seq* decos;
     asdl_stmt_seq *body;
     Py_ssize_t i, funcflags;
-    int annotations;
+    int annotations_flag;
     int scope_type;
     int firstlineno;
 
@@ -2356,12 +2355,12 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
         return 0;
     }
 
-    annotations = compiler_visit_annotations(c, name, args, returns, (void *)args, firstlineno);
-    if (annotations == 0) {
+    annotations_flag = compiler_visit_annotations(c, name, args, returns, (void *)args, firstlineno);
+    if (annotations_flag == 0) {
         return 0;
     }
-    else if (annotations > 0) {
-        funcflags |= 0x04;
+    else if (annotations_flag > 0) {
+        funcflags |= annotations_flag;
     }
 
     if (!compiler_enter_scope(c, name, scope_type, (void *)s, firstlineno)) {

@@ -33,6 +33,7 @@ typedef struct {
     PyObject *func_annotations; /* Annotations, a dict or NULL */
     PyObject *func_qualname;    /* The qualified name */
     vectorcallfunc vectorcall;
+    PyObject *func_co_annotations; /* Code object that returns annotations, or NULL */
 
     /* Invariant:
      *     func_closure contains the bindings for func_code->co_freevars, so
@@ -83,6 +84,8 @@ PyAPI_FUNC(PyObject *) _PyFunction_Vectorcall(
         (((PyFunctionObject *)func) -> func_closure)
 #define PyFunction_GET_ANNOTATIONS(func) \
         (((PyFunctionObject *)func) -> func_annotations)
+#define PyFunction_GET_CO_ANNOTATIONS(func) \
+        (((PyFunctionObject *)func) -> func_co_annotations)
 
 /* The classmethod and staticmethod types lives here, too */
 PyAPI_DATA(PyTypeObject) PyClassMethod_Type;
