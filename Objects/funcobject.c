@@ -202,16 +202,26 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
 }
 
 
-static inline void
+static inline int
 evaluate_co_annotations(PyFunctionObject *func)
 {
     assert(!(func->func_annotations && func->func_co_annotations));
     if ((!func->func_annotations) && func->func_co_annotations) {
         PyObject *fn = PyFunction_New(func->func_co_annotations, func->func_globals);
-        PyObject *annotations = PyObject_CallFunction(fn, NULL);
-        func->func_annotations = annotations;
-        Py_CLEAR(func->func_co_annotations);
+        if (fn) {
+            PyObject *annotations = PyObject_CallFunction(fn, NULL);
+            if (annotations) {
+                if (PyDict_Check(annotations)) {
+                    func->func_annotations = annotations;
+                    Py_CLEAR(func->func_co_annotations);
+                    return 1;
+                }
+                Py_DECREF(annotations);
+            }
+        }
+        return 0;
     }
+    return 1;
 }
 
 PyObject *
@@ -221,7 +231,8 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    evaluate_co_annotations((PyFunctionObject *)op);
+    if (!evaluate_co_annotations((PyFunctionObject *)op))
+        return NULL;
     return ((PyFunctionObject *) op) -> func_annotations;
 }
 
@@ -432,7 +443,8 @@ func_set_kwdefaults(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignor
 static PyObject *
 func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
-    evaluate_co_annotations(op);
+    if (!evaluate_co_annotations(op))
+        return NULL;
     if (op->func_annotations == NULL) {
         op->func_annotations = PyDict_New();
         if (op->func_annotations == NULL)
