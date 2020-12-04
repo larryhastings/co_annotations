@@ -210,6 +210,7 @@ evaluate_co_annotations(PyFunctionObject *func)
         PyObject *fn = PyFunction_New(func->func_co_annotations, func->func_globals);
         if (fn) {
             PyObject *annotations = PyObject_CallFunction(fn, NULL);
+            Py_DECREF(fn);
             if (annotations) {
                 if (PyDict_Check(annotations)) {
                     func->func_annotations = annotations;
