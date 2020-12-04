@@ -620,7 +620,7 @@ compiler_enter_scope(struct compiler *c, identifier name,
         return 0;
     }
 
-    // printf("                             -> ste %p\n", u->u_ste); // REMOVE ME// TODO REMOVE ME
+    // printf("                             -> ste %p\n", u->u_ste); // REMOVE ME
 
     Py_INCREF(name);
     u->u_name = name;
@@ -2141,8 +2141,6 @@ compiler_visit_argannotations(struct compiler *c, asdl_arg_seq* args,
     if (!length) {
         return 1;
     }
-    if (!compiler_enter_co_annotations_scope(c, name, key, lineno))
-        return 0;
     for (i = 0; i < length; i++) {
         arg_ty arg = (arg_ty)asdl_seq_GET(args, i);
         if (!compiler_visit_argannotation(

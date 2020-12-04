@@ -247,10 +247,12 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
                 cls = NULL;
                 goto error;
             }
+            // REMOVE ME
+            // trying to populate ht_module here.
+            // but self is bltinmodule, sigh.
+            // Py_INCREF(self);
+            // ((PyHeapTypeObject*)cls)->ht_module = self;
         }
-        // no, that's bltinmodule
-        Py_INCREF(self);
-        ((PyHeapTypeObject*)cls)->ht_module = self;
     }
 error:
     Py_XDECREF(cell);

@@ -1791,6 +1791,7 @@ symtable_enter_co_annotations(struct symtable *st, expr_ty s, PyObject *ste_name
     if ((st->st_cur->ste_annotations) || !(st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS))
         return 1;
 
+// printf("activating co_annotations in symtable\n");
     if (dot_co_annotations == NULL) {
         dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
         if (!dot_co_annotations)
