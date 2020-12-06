@@ -924,7 +924,7 @@ type_get_annotations(PyTypeObject *type, void *context)
             Py_DECREF(globals);
         }
     }
-    PyErr_Format(PyExc_NameError, "type object '%s' has no attribute '__annotations__'", type->tp_name);
+    PyErr_Format(PyExc_AttributeError, "type object '%.50s' has no attribute '__annotations__'", type->tp_name);
     return NULL;
 }
 
