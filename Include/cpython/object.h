@@ -263,7 +263,6 @@ struct _typeobject {
 
     destructor tp_finalize;
     vectorcallfunc tp_vectorcall;
-    PyObject *tp_annotations;
 };
 
 /* The *real* layout of a type object when allocated on the heap */

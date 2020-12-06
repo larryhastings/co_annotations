@@ -9,7 +9,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_FromArray()
 
-_Py_IDENTIFIER(__annotations__);
+// _Py_IDENTIFIER(__annotations__);
 _Py_IDENTIFIER(__builtins__);
 _Py_IDENTIFIER(__dict__);
 _Py_IDENTIFIER(__prepare__);
@@ -251,12 +251,12 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
                     goto error;
                 }
             }
-            PyObject *annotations = _PyDict_GetItemIdWithError(cls->tp_dict, &PyId___annotations__);
-            if (annotations) {
-                Py_INCREF(annotations);
-                cls->tp_annotations = annotations;
-                _PyDict_DelItemId(cls->tp_dict, &PyId___annotations__);
-            }
+            // PyObject *annotations = _PyDict_GetItemIdWithError(cls->tp_dict, &PyId___annotations__);
+            // if (annotations) {
+            //     Py_INCREF(annotations);
+            //     cls->tp_annotations = annotations;
+            //     _PyDict_DelItemId(cls->tp_dict, &PyId___annotations__);
+            // }
         }
     }
 error:

@@ -71,6 +71,7 @@ static size_t method_cache_collisions = 0;
 
 /* alphabetical order */
 _Py_IDENTIFIER(__abstractmethods__);
+_Py_IDENTIFIER(__annotations__);
 _Py_IDENTIFIER(__class__);
 _Py_IDENTIFIER(__class_getitem__);
 _Py_IDENTIFIER(__co_annotations__);
@@ -897,11 +898,12 @@ type_get_text_signature(PyTypeObject *type, void *context)
 static PyObject *
 type_get_annotations(PyTypeObject *type, void *context)
 {
+    PyObject *annotations = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___annotations__);
     PyObject *co_annotations = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___co_annotations__);
-    assert(!(type->tp_annotations && co_annotations));
-    if (type->tp_annotations) {
-        Py_INCREF(type->tp_annotations);
-        return type->tp_annotations;
+    assert(!(annotations && co_annotations));
+    if (annotations) {
+        Py_INCREF(annotations);
+        return annotations;
     }
     if (co_annotations) {
         PyObject *globals = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___globals__);
@@ -912,10 +914,9 @@ type_get_annotations(PyTypeObject *type, void *context)
                 Py_DECREF(fn);
                 if (annotations) {
                     if (PyDict_Check(annotations)) {
-                        type->tp_annotations = annotations;
+                        _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, annotations);
                         /* TODO BUG this doesn't seem to del __co_annotations__ from tp_dict?!? */
                         _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
-                        Py_INCREF(annotations);
                         return annotations;
                     }
                     Py_DECREF(annotations);
@@ -931,17 +932,21 @@ type_get_annotations(PyTypeObject *type, void *context)
 static int
 type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
 {
-    if (type->tp_annotations) {
-        Py_CLEAR(type->tp_annotations);
-    }
     _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
     PyErr_Clear();
 
     if (value) {
-        Py_INCREF(value);
-        Py_SETREF(type->tp_annotations, value);
+        _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, value);
+        return 0;
     }
-    return 0;
+
+    if (_PyDict_GetItemIdWithError(type->tp_dict, &PyId___annotations__)) {
+        _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
+        return 0;
+    }
+
+    PyErr_Format(PyExc_AttributeError, "__annotations__");
+    return -1;
 }
 
 static int
