@@ -130,6 +130,23 @@ enum {
     COMPILER_SCOPE_ANNOTATION,
 };
 
+/* Data needed to lazily construct a scope for a co_annotations scope. */
+struct annotations_scope_initializer {
+    PyObject *name;   /* name for the enclosing block, will have .__co_annotations__ added to it */
+    void     *key;    /* expr_ty for enclosing block, used as a key for finding the ste */
+    int       lineno; /* lineno for enclosing block */
+};
+
+#define INIT_ANNOTATIONS_SCOPE_INITIALIZER(u) \
+    (u).u_asi.name   = NULL; \
+    (u).u_asi.key    = NULL; \
+    (u).u_asi.lineno =    0; \
+
+#define CLEAR_ANNOTATIONS_SCOPE_INITIALIZER(u) \
+    Py_CLEAR((u).u_asi.name); \
+    INIT_ANNOTATIONS_SCOPE_INITIALIZER(u)
+
+
 /* The following items change on entry and exit of code blocks.
    They must be saved and restored when returning to a block.
 */
@@ -167,7 +184,8 @@ struct compiler_unit {
     int u_lineno;          /* the lineno for the current stmt */
     int u_col_offset;      /* the offset of the current stmt */
 
-    int  u_co_annotations;        /* we're processing co_annotations right now */
+    struct annotations_scope_initializer u_asi;
+    struct compiler_unit *u_annotation_scope;
 };
 
 /* This struct captures the global state of a compilation.
@@ -250,7 +268,7 @@ static int compiler_async_comprehension_generator(
                                       expr_ty elt, expr_ty val, int type);
 
 static PyCodeObject *assemble(struct compiler *, int addNone);
-static PyObject *__doc__, *__annotations__;
+static PyObject *__doc__, *__annotations__, *__co_annotations__, *__globals__, *globals_identifier;
 
 #define CAPSULE_NAME "compile.c compiler unit"
 
@@ -358,6 +376,21 @@ PyAST_CompileObject(mod_ty mod, PyObject *filename, PyCompilerFlags *flags,
     if (!__annotations__) {
         __annotations__ = PyUnicode_InternFromString("__annotations__");
         if (!__annotations__)
+            return NULL;
+    }
+    if (!__co_annotations__) {
+        __co_annotations__ = PyUnicode_InternFromString("__co_annotations__");
+        if (!__co_annotations__)
+            return NULL;
+    }
+    if (!__globals__) {
+        __globals__ = PyUnicode_InternFromString("__globals__");
+        if (!__globals__)
+            return NULL;
+    }
+    if (!globals_identifier) {
+        globals_identifier = PyUnicode_InternFromString("globals");
+        if (!globals_identifier)
             return NULL;
     }
     if (!compiler_init(&c))
@@ -561,6 +594,7 @@ compiler_unit_free(struct compiler_unit *u)
     Py_CLEAR(u->u_freevars);
     Py_CLEAR(u->u_cellvars);
     Py_CLEAR(u->u_private);
+    CLEAR_ANNOTATIONS_SCOPE_INITIALIZER(*u);
     PyObject_Free(u);
 }
 
@@ -662,7 +696,8 @@ compiler_enter_scope(struct compiler *c, identifier name,
     u->u_lineno = 0;
     u->u_col_offset = 0;
 
-    u->u_co_annotations = 0;
+    INIT_ANNOTATIONS_SCOPE_INITIALIZER(*u);
+    u->u_annotation_scope = NULL;
 
     u->u_consts = PyDict_New();
     if (!u->u_consts) {
@@ -735,6 +770,62 @@ compiler_exit_scope(struct compiler *c)
     // printf("<< compiler_exit_scope\n"); // REMOVE ME
     compiler_unit_free(u);
 }
+
+
+static PyObject *dot_co_annotations = NULL;
+
+static int
+compiler_enter_co_annotations_scope(struct compiler *c)
+{
+    if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION)
+        return 1;
+
+    if (c->u->u_annotation_scope != NULL) {
+        return compiler_push_scope(c, c->u->u_annotation_scope);
+    }
+
+    int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
+
+    if (co_annotations) {
+        if (dot_co_annotations == NULL) {
+            dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
+            if (!dot_co_annotations)
+                return 0;
+        }
+
+        PyObject *name_dot_co_annotations = PyUnicode_Concat(c->u->u_asi.name, dot_co_annotations);
+
+        if (!compiler_enter_scope(c,
+            name_dot_co_annotations,
+            COMPILER_SCOPE_ANNOTATION,
+            c->u->u_asi.key,
+            c->u->u_asi.lineno))
+            return 0;
+    }
+    return 1;
+}
+
+
+static int
+compiler_pop_co_annotations_scope(struct compiler *c) {
+    if (c->u->u_scope_type != COMPILER_SCOPE_ANNOTATION)
+        return 0;
+    struct compiler_unit *annotations_scope = compiler_pop_scope(c);
+    c->u->u_annotation_scope = annotations_scope;
+    return 1;
+}
+
+
+static int
+compiler_exit_co_annotations_scope(struct compiler *c)
+{
+    if (c->u->u_scope_type != COMPILER_SCOPE_ANNOTATION)
+        return 0;
+    compiler_exit_scope(c);
+    c->u->u_annotation_scope = NULL;
+    return 1;
+}
+
 
 static int
 compiler_set_qualname(struct compiler *c)
@@ -1840,8 +1931,10 @@ compiler_body(struct compiler *c, asdl_stmt_seq *stmts)
         SET_LOC(c, st);
     }
     /* Every annotated class and module should have __annotations__. */
-    if (find_ann(stmts)) {
-        ADDOP(c, SETUP_ANNOTATIONS);
+    if (!(c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+        if (find_ann(stmts)) {
+            ADDOP(c, SETUP_ANNOTATIONS);
+        }
     }
     if (!asdl_seq_LEN(stmts))
         return 1;
@@ -2068,49 +2161,14 @@ compiler_visit_annexpr(struct compiler *c, expr_ty annotation)
     return 1;
 }
 
-static PyObject *dot_co_annotations = NULL;
-
-static int
-compiler_enter_co_annotations_scope(struct compiler *c, identifier name, void *key, int lineno)
-{
-    if (c->u->u_co_annotations)
-        return 1;
-
-    int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
-
-    if (co_annotations) {
-        if (dot_co_annotations == NULL) {
-            dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
-            if (!dot_co_annotations)
-                return 0;
-        }
-
-        PyObject *name_dot_co_annotations = PyUnicode_Concat(name, dot_co_annotations);
-
-        if (!compiler_enter_scope(c, name_dot_co_annotations, COMPILER_SCOPE_ANNOTATION, key, lineno))
-            return 0;
-        c->u->u_co_annotations = 1;
-    }
-    return 1;
-}
-
-static int
-compiler_exit_co_annotations_scope(struct compiler *c)
-{
-    if (!c->u->u_co_annotations)
-        return 0;
-    compiler_exit_scope(c);
-    return 1;
-}
-
 static int
 compiler_visit_argannotation(struct compiler *c, identifier id,
-    expr_ty annotation, PyObject *names, identifier name, void *key, int lineno)
+    expr_ty annotation, PyObject *names)
 {
     if (annotation) {
         PyObject *mangled;
         if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
-            if (!compiler_enter_co_annotations_scope(c, name, key, lineno))
+            if (!compiler_enter_co_annotations_scope(c))
                 return 0;
             VISIT(c, expr, annotation)
         }
@@ -2134,7 +2192,7 @@ compiler_visit_argannotation(struct compiler *c, identifier id,
 
 static int
 compiler_visit_argannotations(struct compiler *c, asdl_arg_seq* args,
-                              PyObject *names, identifier name, void *key, int lineno)
+                              PyObject *names)
 {
     int i;
     int length = asdl_seq_LEN(args);
@@ -2147,15 +2205,14 @@ compiler_visit_argannotations(struct compiler *c, asdl_arg_seq* args,
                         c,
                         arg->arg,
                         arg->annotation,
-                        names, name, key, lineno))
+                        names))
             return 0;
     }
     return 1;
 }
 
 static int
-compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty args,
-                           expr_ty returns, void *key, int lineno)
+compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty returns)
 {
     /* Push arg annotation dict.
        The expressions are evaluated out-of-order wrt the source code.
@@ -2173,19 +2230,19 @@ compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty arg
     int annotations_fn_flag = (co_annotations) ? 0x10 : 0x04;
     int return_value = 0;
 
-    if (!compiler_visit_argannotations(c, args->args, names, name, key, lineno))
+    if (!compiler_visit_argannotations(c, args->args, names))
         goto error;
-    if (!compiler_visit_argannotations(c, args->posonlyargs, names, name, key, lineno))
+    if (!compiler_visit_argannotations(c, args->posonlyargs, names))
         goto error;
     if (args->vararg && args->vararg->annotation &&
         !compiler_visit_argannotation(c, args->vararg->arg,
-                                     args->vararg->annotation, names, name, key, lineno))
+                                     args->vararg->annotation, names))
         goto error;
-    if (!compiler_visit_argannotations(c, args->kwonlyargs, names, name, key, lineno))
+    if (!compiler_visit_argannotations(c, args->kwonlyargs, names))
         goto error;
     if (args->kwarg && args->kwarg->annotation &&
         !compiler_visit_argannotation(c, args->kwarg->arg,
-                                     args->kwarg->annotation, names, name, key, lineno))
+                                     args->kwarg->annotation, names))
         goto error;
 
     if (!return_str) {
@@ -2194,7 +2251,7 @@ compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty arg
             goto error;
     }
 
-    if (!compiler_visit_argannotation(c, return_str, returns, names, name, key, lineno)) {
+    if (!compiler_visit_argannotation(c, return_str, returns, names)) {
         goto error;
     }
 
@@ -2208,7 +2265,7 @@ compiler_visit_annotations(struct compiler *c, identifier name, arguments_ty arg
     }
     Py_DECREF(names);
 
-    if (c->u->u_co_annotations) {
+    if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
         ADDOP(c, RETURN_VALUE);
         PyCodeObject *co = assemble(c, 0);
         compiler_exit_co_annotations_scope(c);
@@ -2353,12 +2410,21 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
         return 0;
     }
 
-    annotations_flag = compiler_visit_annotations(c, name, args, returns, (void *)args, firstlineno);
+    {
+    /* backup and temporarily overwrite u_asi */
+    struct annotations_scope_initializer saved_asi = c->u->u_asi;
+    c->u->u_asi.name = name;
+    c->u->u_asi.key = (void *)args;
+    c->u->u_asi.lineno = firstlineno;
+
+    annotations_flag = compiler_visit_annotations(c, args, returns);
     if (annotations_flag == 0) {
         return 0;
     }
     else if (annotations_flag > 0) {
         funcflags |= annotations_flag;
+    }
+    c->u->u_asi = saved_asi;
     }
 
     if (!compiler_enter_scope(c, name, scope_type, (void *)s, firstlineno)) {
@@ -2435,6 +2501,12 @@ compiler_class(struct compiler *c, stmt_ty s)
         return 0;
     /* this block represents what we do in the new scope */
     {
+        if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            /* initialize the ASI in case we have annotations */
+            c->u->u_asi.name = s->v.ClassDef.name;
+            c->u->u_asi.key = (void *)s;
+            c->u->u_asi.lineno = firstlineno;
+        }
         /* use the class name for name mangling */
         Py_INCREF(s->v.ClassDef.name);
         Py_XSETREF(c->u->u_private, s->v.ClassDef.name);
@@ -2467,6 +2539,19 @@ compiler_class(struct compiler *c, stmt_ty s)
         if (!compiler_body(c, s->v.ClassDef.body)) {
             compiler_exit_scope(c);
             return 0;
+        }
+        if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            if (c->u->u_annotation_scope) {
+                compiler_enter_co_annotations_scope(c);
+                ADDOP(c, RETURN_VALUE);
+                PyCodeObject *co = assemble(c, 0);
+                compiler_exit_co_annotations_scope(c);
+                ADDOP_LOAD_CONST(c, (PyObject*)co);
+                ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
+                ADDOP_NAME(c, LOAD_GLOBAL, globals_identifier, names);
+                ADDOP_I(c, CALL_FUNCTION, 0);
+                ADDOP_NAME(c, STORE_NAME, __globals__, names);
+            }
         }
         /* Return __classcell__ if it is referenced, otherwise return None */
         if (c->u->u_ste->ste_needs_class_closure) {
@@ -5376,18 +5461,37 @@ compiler_annassign(struct compiler *c, stmt_ty s)
             (c->u->u_scope_type == COMPILER_SCOPE_MODULE ||
              c->u->u_scope_type == COMPILER_SCOPE_CLASS)) {
             if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+                /*
+                 * TODO:
+                 * should really use a "names" parameter
+                 * and BUILD_CONST_KEY_MAP
+                 * the way compiler_visit_annotations does it
+                 */
+                int need_build_map = c->u->u_annotation_scope == NULL;
+                if (!compiler_enter_co_annotations_scope(c))
+                    return 0;
+                if (need_build_map) {
+                    ADDOP_I(c, BUILD_MAP, 0);
+                }
+                ADDOP(c, DUP_TOP);
                 VISIT(c, expr, s->v.AnnAssign.annotation);
+                ADDOP(c, ROT_TWO);
+            } else {
+                if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
+                    VISIT(c, annexpr, s->v.AnnAssign.annotation)
+                }
+                else {
+                    VISIT(c, expr, s->v.AnnAssign.annotation);
+                }
+                ADDOP_NAME(c, LOAD_NAME, __annotations__, names);
             }
-            else if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
-                VISIT(c, annexpr, s->v.AnnAssign.annotation)
-            }
-            else {
-                VISIT(c, expr, s->v.AnnAssign.annotation);
-            }
-            ADDOP_NAME(c, LOAD_NAME, __annotations__, names);
             mangled = _Py_Mangle(c->u->u_private, targ->v.Name.id);
             ADDOP_LOAD_CONST_NEW(c, mangled);
             ADDOP(c, STORE_SUBSCR);
+            if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+                if (!compiler_pop_co_annotations_scope(c))
+                    return 0;
+            }
         }
         break;
     case Attribute_kind:

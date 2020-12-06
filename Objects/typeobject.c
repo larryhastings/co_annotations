@@ -73,11 +73,13 @@ static size_t method_cache_collisions = 0;
 _Py_IDENTIFIER(__abstractmethods__);
 _Py_IDENTIFIER(__class__);
 _Py_IDENTIFIER(__class_getitem__);
+_Py_IDENTIFIER(__co_annotations__);
 _Py_IDENTIFIER(__delitem__);
 _Py_IDENTIFIER(__dict__);
 _Py_IDENTIFIER(__doc__);
 _Py_IDENTIFIER(__getattribute__);
 _Py_IDENTIFIER(__getitem__);
+_Py_IDENTIFIER(__globals__);
 _Py_IDENTIFIER(__hash__);
 _Py_IDENTIFIER(__init_subclass__);
 _Py_IDENTIFIER(__len__);
@@ -892,6 +894,56 @@ type_get_text_signature(PyTypeObject *type, void *context)
     return _PyType_GetTextSignatureFromInternalDoc(type->tp_name, type->tp_doc);
 }
 
+static PyObject *
+type_get_annotations(PyTypeObject *type, void *context)
+{
+    PyObject *co_annotations = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___co_annotations__);
+    assert(!(type->tp_annotations && co_annotations));
+    if (type->tp_annotations) {
+        Py_INCREF(type->tp_annotations);
+        return type->tp_annotations;
+    }
+    if (co_annotations) {
+        PyObject *globals = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___globals__);
+        if (globals) {
+            PyObject *fn = PyFunction_New(co_annotations, globals);
+            if (fn) {
+                PyObject *annotations = PyObject_CallFunction(fn, NULL);
+                Py_DECREF(fn);
+                if (annotations) {
+                    if (PyDict_Check(annotations)) {
+                        type->tp_annotations = annotations;
+                        /* TODO BUG this doesn't seem to del __co_annotations__ from tp_dict?!? */
+                        _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
+                        Py_INCREF(annotations);
+                        return annotations;
+                    }
+                    Py_DECREF(annotations);
+                }
+            }
+            Py_DECREF(globals);
+        }
+    }
+    PyErr_Format(PyExc_NameError, "type object '%s' has no attribute '__annotations__'", type->tp_name);
+    return NULL;
+}
+
+static int
+type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
+{
+    if (type->tp_annotations) {
+        Py_CLEAR(type->tp_annotations);
+    }
+    _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
+    PyErr_Clear();
+
+    if (value) {
+        Py_INCREF(value);
+        Py_SETREF(type->tp_annotations, value);
+    }
+    return 0;
+}
+
 static int
 type_set_doc(PyTypeObject *type, PyObject *value, void *context)
 {
@@ -944,6 +996,7 @@ static PyGetSetDef type_getsets[] = {
     {"__dict__",  (getter)type_dict,  NULL, NULL},
     {"__doc__", (getter)type_get_doc, (setter)type_set_doc, NULL},
     {"__text_signature__", (getter)type_get_text_signature, NULL, NULL},
+    {"__annotations__", (getter)type_get_annotations, (setter)type_set_annotations, NULL},
     {0}
 };
 

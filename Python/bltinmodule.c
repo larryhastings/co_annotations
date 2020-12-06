@@ -9,6 +9,7 @@
 #include "pycore_pystate.h"       // _PyThreadState_GET()
 #include "pycore_tuple.h"         // _PyTuple_FromArray()
 
+_Py_IDENTIFIER(__annotations__);
 _Py_IDENTIFIER(__builtins__);
 _Py_IDENTIFIER(__dict__);
 _Py_IDENTIFIER(__prepare__);
@@ -103,7 +104,8 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
                         PyObject *kwnames)
 {
     PyObject *func, *name, *bases, *mkw, *meta, *winner, *prep, *ns, *orig_bases;
-    PyObject *cls = NULL, *cell = NULL;
+    PyObject *cell = NULL;
+    PyTypeObject *cls = NULL;
     int isclass = 0;   /* initialize to prevent gcc warning */
 
     if (nargs < 2) {
@@ -229,29 +231,32 @@ builtin___build_class__(PyObject *self, PyObject *const *args, Py_ssize_t nargs,
             }
         }
         PyObject *margs[3] = {name, bases, ns};
-        cls = PyObject_VectorcallDict(meta, margs, 3, mkw);
-        if (cls != NULL && PyType_Check(cls) && PyCell_Check(cell)) {
-            PyObject *cell_cls = PyCell_GET(cell);
-            if (cell_cls != cls) {
-                if (cell_cls == NULL) {
-                    const char *msg =
-                        "__class__ not set defining %.200R as %.200R. "
-                        "Was __classcell__ propagated to type.__new__?";
-                    PyErr_Format(PyExc_RuntimeError, msg, name, cls);
-                } else {
-                    const char *msg =
-                        "__class__ set to %.200R defining %.200R as %.200R";
-                    PyErr_Format(PyExc_TypeError, msg, cell_cls, name, cls);
+        cls = (PyTypeObject *)PyObject_VectorcallDict(meta, margs, 3, mkw);
+        if (cls != NULL && PyType_Check(cls)) {
+            if (PyCell_Check(cell)) {
+                PyObject *cell_cls = PyCell_GET(cell);
+                if (cell_cls != (PyObject *)cls) {
+                    if (cell_cls == NULL) {
+                        const char *msg =
+                            "__class__ not set defining %.200R as %.200R. "
+                            "Was __classcell__ propagated to type.__new__?";
+                        PyErr_Format(PyExc_RuntimeError, msg, name, cls);
+                    } else {
+                        const char *msg =
+                            "__class__ set to %.200R defining %.200R as %.200R";
+                        PyErr_Format(PyExc_TypeError, msg, cell_cls, name, cls);
+                    }
+                    Py_DECREF(cls);
+                    cls = NULL;
+                    goto error;
                 }
-                Py_DECREF(cls);
-                cls = NULL;
-                goto error;
             }
-            // REMOVE ME
-            // trying to populate ht_module here.
-            // but self is bltinmodule, sigh.
-            // Py_INCREF(self);
-            // ((PyHeapTypeObject*)cls)->ht_module = self;
+            PyObject *annotations = _PyDict_GetItemIdWithError(cls->tp_dict, &PyId___annotations__);
+            if (annotations) {
+                Py_INCREF(annotations);
+                cls->tp_annotations = annotations;
+                _PyDict_DelItemId(cls->tp_dict, &PyId___annotations__);
+            }
         }
     }
 error:
@@ -263,7 +268,7 @@ error:
     if (bases != orig_bases) {
         Py_DECREF(orig_bases);
     }
-    return cls;
+    return (PyObject *)cls;
 }
 
 PyDoc_STRVAR(build_class_doc,
