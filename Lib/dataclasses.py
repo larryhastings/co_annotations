@@ -863,7 +863,10 @@ def _process_class(cls, init, repr, eq, order, unsafe_hash, frozen):
     # actual default value.  Pseudo-fields ClassVars and InitVars are
     # included, despite the fact that they're not real fields.  That's
     # dealt with later.
-    cls_annotations = cls.__dict__.get('__annotations__', {})
+    if (("__annotations__" in cls.__dict__) or ("__co_annotations__" in cls.__dict__)):
+        cls_annotations = cls.__annotations__
+    else:
+        cls_annotations = {}
 
     # Now find fields in our class.  While doing so, validate some
     # things, and set the default values (as class attributes) where

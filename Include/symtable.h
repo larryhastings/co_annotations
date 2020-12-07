@@ -16,6 +16,33 @@ typedef enum _block_type { FunctionBlock, ClassBlock, ModuleBlock }
 
 struct _symtable_entry;
 
+/* Data needed to lazily construct a scope for annotations, in compiler or symtable. */
+struct annotations_scope_initializer {
+    PyObject *basename;   /* name for the enclosing block, will have .__co_annotations__ added to it */
+    void     *ast;        /* ast node for the enclosing block, used as a key for the ste */
+    int       line;
+    int       column;
+};
+
+#define INIT_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
+    (asi).basename = NULL; \
+    (asi).ast      = NULL; \
+    (asi).line     =    0; \
+    (asi).column   =    0; \
+
+#define SET_ANNOTATIONS_SCOPE_INITIALIZER(asi, _basename, _ast, _line, _column) \
+    /* Py_CLEAR((asi).basename); */ \
+    (asi).basename = _basename; \
+    if (_basename) \
+        Py_INCREF(_basename); \
+    (asi).ast      = (void *)_ast; \
+    (asi).line     = _line; \
+    (asi).column   = _column; \
+
+#define CLEAR_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
+    Py_CLEAR((asi).basename); \
+    INIT_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
+
 struct symtable {
     PyObject *st_filename;          /* name of file being compiled,
                                        decoded from the filesystem encoding */
@@ -59,12 +86,14 @@ typedef struct _symtable_entry {
                                              closure over __class__
                                              should be created */
     unsigned ste_comp_iter_target : 1; /* true if visiting comprehension target */
-    unsigned ste_annotations;/* are we currently generating co_annotations for a fn? */
+    unsigned ste_is_co_annotation_block : 1; /* true if currently a co_annotation block */
     int ste_comp_iter_expr; /* non-zero if visiting a comprehension range expression */
     int ste_lineno;          /* first line of block */
     int ste_col_offset;      /* offset of first line of block */
     int ste_opt_lineno;      /* lineno of last exec or import * */
     int ste_opt_col_offset;  /* offset of last exec or import * */
+    struct annotations_scope_initializer ste_asi;
+    struct _symtable_entry *ste_popped_annotations_ste;
     struct symtable *ste_table;
 } PySTEntryObject;
 

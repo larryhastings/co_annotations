@@ -1387,7 +1387,12 @@ def get_type_hints(obj, globalns=None, localns=None, include_extras=False):
                 base_globals = sys.modules[base.__module__].__dict__
             else:
                 base_globals = globalns
-            ann = base.__dict__.get('__annotations__', {})
+            if base == type:
+                ann = {}
+            elif (("__annotations__" in base.__dict__) or ("__co_annotations__" in base.__dict__)):
+                ann = base.__annotations__
+            else:
+                ann = {}
             for name, value in ann.items():
                 if value is None:
                     value = type(None)
