@@ -1067,6 +1067,10 @@ symtable_enter_co_annotations_block(struct symtable *st)
         return 1;
     }
 
+    if (!cur->ste_asi.basename) {
+        return 1;
+    }
+
     if (dot_co_annotations == NULL) {
         dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
         if (!dot_co_annotations)

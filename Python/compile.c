@@ -773,7 +773,11 @@ compiler_enter_co_annotations_scope(struct compiler *c)
     int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
 
     if (co_annotations) {
-        if (dot_co_annotations == NULL) {
+         if (!c->u->u_asi.basename) {
+            return 1;
+        }
+
+       if (dot_co_annotations == NULL) {
             dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
             if (!dot_co_annotations)
                 return 0;
