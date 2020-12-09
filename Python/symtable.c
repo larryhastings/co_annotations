@@ -308,6 +308,7 @@ PySymtable_BuildObject(mod_ty mod, PyObject *filename, PyFutureFeatures *future)
     st->st_top = st->st_cur;
     switch (mod->kind) {
     case Module_kind:
+        SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, filename, mod->v.Module.body, 0, 0);
         seq = mod->v.Module.body;
         for (i = 0; i < asdl_seq_LEN(seq); i++)
             if (!symtable_visit_stmt(st,

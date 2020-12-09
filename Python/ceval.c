@@ -3843,13 +3843,13 @@ main_loop:
                 goto error;
             }
 
-            if (oparg & 0x10) {
-                assert(TOP()->ob_type == PyCode_Type);
-                func->func_co_annotations = POP();
-            }
             if (oparg & 0x08) {
                 assert(PyTuple_CheckExact(TOP()));
                 func ->func_closure = POP();
+            }
+            if (oparg & 0x10) {
+                assert(TOP()->ob_type == PyCode_Type);
+                func->func_co_annotations = POP();
             }
             if (oparg & 0x04) {
                 assert(PyDict_CheckExact(TOP()));

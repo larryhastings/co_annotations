@@ -216,7 +216,7 @@ static int compiler_error(struct compiler *, const char *);
 static int compiler_warn(struct compiler *, const char *, ...);
 static int compiler_nameop(struct compiler *, identifier, expr_context_ty);
 
-static PyCodeObject *compiler_mod(struct compiler *, mod_ty);
+static PyCodeObject *compiler_mod(struct compiler *, mod_ty, PyObject *filename);
 static int compiler_visit_stmt(struct compiler *, stmt_ty);
 static int compiler_visit_keyword(struct compiler *, keyword_ty);
 static int compiler_visit_expr(struct compiler *, expr_ty);
@@ -410,7 +410,7 @@ PyAST_CompileObject(mod_ty mod, PyObject *filename, PyCompilerFlags *flags,
         goto finally;
     }
 
-    co = compiler_mod(&c, mod);
+    co = compiler_mod(&c, mod, filename);
 
  finally:
     compiler_free(&c);
@@ -1946,7 +1946,7 @@ compiler_body(struct compiler *c, asdl_stmt_seq *stmts)
 }
 
 static PyCodeObject *
-compiler_mod(struct compiler *c, mod_ty mod)
+compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
 {
     PyCodeObject *co;
     int addNone = 1;
@@ -1961,6 +1961,7 @@ compiler_mod(struct compiler *c, mod_ty mod)
         return NULL;
     switch (mod->kind) {
     case Module_kind:
+        SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, filename, mod->v.Module.body, 0, 0);
         if (!compiler_body(c, mod->v.Module.body)) {
             compiler_exit_scope(c);
             return 0;
