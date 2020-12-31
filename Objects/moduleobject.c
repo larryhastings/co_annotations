@@ -11,6 +11,8 @@ static Py_ssize_t max_module_number;
 _Py_IDENTIFIER(__doc__);
 _Py_IDENTIFIER(__name__);
 _Py_IDENTIFIER(__spec__);
+_Py_IDENTIFIER(__annotations__);
+_Py_IDENTIFIER(__co_annotations__);
 
 typedef struct {
     PyObject_HEAD
@@ -825,6 +827,65 @@ static PyMethodDef module_methods[] = {
     {0}
 };
 
+
+
+static PyObject *
+module_get_annotations(PyModuleObject *m, void *context)
+{
+    PyObject *annotations = _PyDict_GetItemIdWithError(m->md_dict, &PyId___annotations__);
+    PyObject *co_annotations = _PyDict_GetItemIdWithError(m->md_dict, &PyId___co_annotations__);
+    PyObject *mod_name = _PyDict_GetItemId(m->md_dict, &PyId___name__);
+    assert(!(annotations && co_annotations));
+    if (annotations) {
+        Py_INCREF(annotations);
+        return annotations;
+    }
+    if (co_annotations) {
+        PyObject *fn = PyFunction_New(co_annotations, m->md_dict);
+        if (fn) {
+            PyObject *annotations = PyObject_CallFunction(fn, NULL);
+            Py_DECREF(fn);
+            if (annotations) {
+                if (PyDict_Check(annotations)) {
+                    _PyDict_SetItemId(m->md_dict, &PyId___annotations__, annotations);
+                    /* TODO BUG this doesn't seem to del __co_annotations__ from md_dict?!? */
+                    _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
+                    return annotations;
+                }
+                Py_DECREF(annotations);
+            }
+        }
+    }
+    PyErr_Format(PyExc_AttributeError, "module object '%U' has no attribute '__annotations__'", mod_name);
+    return NULL;
+}
+
+static int
+module_set_annotations(PyModuleObject *m, PyObject *value, void *context)
+{
+    _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
+    PyErr_Clear();
+
+    if (value) {
+        _PyDict_SetItemId(m->md_dict, &PyId___annotations__, value);
+        return 0;
+    }
+
+    if (_PyDict_GetItemIdWithError(m->md_dict, &PyId___annotations__)) {
+        _PyDict_DelItemId(m->md_dict, &PyId___annotations__);
+        return 0;
+    }
+
+    PyErr_Format(PyExc_AttributeError, "__annotations__");
+    return -1;
+}
+
+
+static PyGetSetDef module_getsets[] = {
+    {"__annotations__", (getter)module_get_annotations, (setter)module_set_annotations, NULL},
+    {0}
+};
+
 PyTypeObject PyModule_Type = {
     PyVarObject_HEAD_INIT(&PyType_Type, 0)
     "module",                                   /* tp_name */
@@ -856,7 +917,7 @@ PyTypeObject PyModule_Type = {
     0,                                          /* tp_iternext */
     module_methods,                             /* tp_methods */
     module_members,                             /* tp_members */
-    0,                                          /* tp_getset */
+    module_getsets,                             /* tp_getset */
     0,                                          /* tp_base */
     0,                                          /* tp_dict */
     0,                                          /* tp_descr_get */

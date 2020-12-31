@@ -757,11 +757,16 @@ compiler_exit_scope(struct compiler *c)
 
 static PyObject *dot_co_annotations = NULL;
 
+/*
+ * Returns >0 if we succeeded and are currently in the annotation scope.
+ * Returns  0 if there was an error.
+ * Returns <0 if we succeeded but we aren't in the annotation scope for some reason.
+ */
 static int
 compiler_enter_co_annotations_scope(struct compiler *c)
 {
     if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION)
-        return 1;
+        return -1;
 
     if (c->u->u_popped_annotation_scope != NULL) {
         int return_value = compiler_push_scope(c, c->u->u_popped_annotation_scope);
@@ -774,7 +779,7 @@ compiler_enter_co_annotations_scope(struct compiler *c)
 
     if (co_annotations) {
          if (!c->u->u_asi.basename) {
-            return 1;
+            return -1;
         }
 
        if (dot_co_annotations == NULL) {
@@ -1961,10 +1966,22 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
         return NULL;
     switch (mod->kind) {
     case Module_kind:
-        SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, filename, mod->v.Module.body, 0, 0);
+        if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            /* initialize the ASI in case we have annotations */
+            SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, filename, mod->v.Module.body, 0, 0);
+        }
         if (!compiler_body(c, mod->v.Module.body)) {
             compiler_exit_scope(c);
             return 0;
+        }
+        if (c->u->u_popped_annotation_scope) {
+            /* we must have hit an annotation, we have a scope. */
+            compiler_enter_co_annotations_scope(c);
+            ADDOP(c, RETURN_VALUE);
+            PyCodeObject *co = assemble(c, 0);
+            compiler_exit_co_annotations_scope(c);
+            ADDOP_LOAD_CONST(c, (PyObject*)co);
+            ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
         }
         break;
     case Interactive_kind:
@@ -2404,19 +2421,19 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
         return 0;
     }
 
-    {
-    /* backup and temporarily overwrite u_asi */
-    struct annotations_scope_initializer saved_asi = c->u->u_asi;
-    SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, name, args, firstlineno, column);
+    if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+        /* backup and temporarily overwrite u_asi */
+        struct annotations_scope_initializer saved_asi = c->u->u_asi;
+        SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, name, args, firstlineno, column);
 
-    annotations_flag = compiler_visit_annotations(c, args, returns);
-    if (annotations_flag == 0) {
-        return 0;
-    }
-    else if (annotations_flag > 0) {
-        funcflags |= annotations_flag;
-    }
-    c->u->u_asi = saved_asi;
+        annotations_flag = compiler_visit_annotations(c, args, returns);
+        if (annotations_flag == 0) {
+            return 0;
+        }
+        else if (annotations_flag > 0) {
+            funcflags |= annotations_flag;
+        }
+        c->u->u_asi = saved_asi;
     }
 
     if (!compiler_enter_scope(c, name, scope_type, (void *)s, firstlineno)) {
@@ -5454,7 +5471,14 @@ compiler_annassign(struct compiler *c, stmt_ty s)
         if (s->v.AnnAssign.simple &&
             (c->u->u_scope_type == COMPILER_SCOPE_MODULE ||
              c->u->u_scope_type == COMPILER_SCOPE_CLASS)) {
+            int generate_co_annotation_bytecode = 0;
             if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+                int result = compiler_enter_co_annotations_scope(c);
+                if (!result)
+                    return 0;
+                generate_co_annotation_bytecode = result > 0;
+            }
+            if (generate_co_annotation_bytecode) {
                 /*
                  * TODO:
                  * should really use a "names" parameter
@@ -5462,8 +5486,6 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                  * the way compiler_visit_annotations does it
                  */
                 int need_build_map = (c->u->u_popped_annotation_scope == NULL);
-                if (!compiler_enter_co_annotations_scope(c))
-                    return 0;
                 if (need_build_map) {
                     ADDOP_I(c, BUILD_MAP, 0);
                 }
@@ -5482,7 +5504,7 @@ compiler_annassign(struct compiler *c, stmt_ty s)
             mangled = _Py_Mangle(c->u->u_private, targ->v.Name.id);
             ADDOP_LOAD_CONST_NEW(c, mangled);
             ADDOP(c, STORE_SUBSCR);
-            if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            if (generate_co_annotation_bytecode) {
                 if (!compiler_pop_co_annotations_scope(c))
                     return 0;
             }

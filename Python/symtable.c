@@ -197,6 +197,8 @@ static int symtable_enter_block(struct symtable *st, identifier name,
                                 _Py_block_ty block, void *ast, int lineno,
                                 int col_offset);
 static int symtable_exit_block(struct symtable *st);
+static int symtable_enter_co_annotations_block(struct symtable *st);
+static int symtable_exit_co_annotations_block(struct symtable *st);
 static int symtable_visit_stmt(struct symtable *st, stmt_ty s);
 static int symtable_visit_expr(struct symtable *st, expr_ty s);
 static int symtable_visit_genexp(struct symtable *st, expr_ty s);
@@ -308,12 +310,22 @@ PySymtable_BuildObject(mod_ty mod, PyObject *filename, PyFutureFeatures *future)
     st->st_top = st->st_cur;
     switch (mod->kind) {
     case Module_kind:
-        SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, filename, mod->v.Module.body, 0, 0);
+        if (st->st_future && (st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+            SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, filename, mod->v.Module.body, 0, 0);
+        }
         seq = mod->v.Module.body;
         for (i = 0; i < asdl_seq_LEN(seq); i++)
             if (!symtable_visit_stmt(st,
                         (stmt_ty)asdl_seq_GET(seq, i)))
                 goto error;
+        if (st->st_cur->ste_popped_annotations_ste) {
+            // we had some annotations in the body.
+            // finish up the scope.
+            symtable_enter_co_annotations_block(st);
+            if (!(symtable_exit_co_annotations_block(st))) {
+                goto error;
+            }
+        }
         break;
     case Expression_kind:
         if (!symtable_visit_expr(st, mod->v.Expression.body))
@@ -1335,7 +1347,9 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         if (s->v.FunctionDef.args->kw_defaults)
             VISIT_SEQ_WITH_NULL(st, expr, s->v.FunctionDef.args->kw_defaults);
         saved = st->st_cur->ste_asi;
-        SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, s->v.FunctionDef.name, s->v.FunctionDef.args, s->lineno, s->col_offset);
+        if (st->st_future && (st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+            SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, s->v.FunctionDef.name, s->v.FunctionDef.args, s->lineno, s->col_offset);
+        }
         if (!symtable_visit_annotations(st, s->v.FunctionDef.args,
                                         s->v.FunctionDef.returns,
                                         s->v.FunctionDef.name))
@@ -1578,7 +1592,9 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
             VISIT_SEQ_WITH_NULL(st, expr,
                                 s->v.AsyncFunctionDef.args->kw_defaults);
         saved = st->st_cur->ste_asi;
-        SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, s->v.AsyncFunctionDef.name, s->v.AsyncFunctionDef.args, s->lineno, s->col_offset);
+        if (st->st_future && (st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+            SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, s->v.AsyncFunctionDef.name, s->v.AsyncFunctionDef.args, s->lineno, s->col_offset);
+        }
         if (!symtable_visit_annotations(st, s->v.AsyncFunctionDef.args,
                                         s->v.AsyncFunctionDef.returns,
                                         s->v.AsyncFunctionDef.name))
