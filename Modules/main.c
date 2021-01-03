@@ -484,6 +484,39 @@ error:
 
 
 static int
+pymain_setup_interactive_annotations()
+{
+    _Py_IDENTIFIER(__main__);
+    _Py_IDENTIFIER(__annotations__);
+    _Py_IDENTIFIER(__co_annotations__);
+    PyInterpreterState *interp = _PyInterpreterState_GET();
+    PyObject *__main__ = _PyDict_GetItemIdWithError(interp->modules, &PyId___main__);
+    if (!__main__)
+        return 0;
+
+    PyObject *already_set = _PyDict_GetItemIdWithError(__main__, &PyId___annotations__);
+    if (already_set)
+        return 1;
+
+    PyObject *co_annotations = _PyDict_GetItemIdWithError(__main__, &PyId___co_annotations__);
+    if (co_annotations) {
+        PyObject *annotations = PyObject_GetAttrString(__main__, "__annotations__");
+        Py_DECREF(annotations);
+        return 1;
+    }
+
+    PyObject *d = PyDict_New();
+    if ((d == NULL) ||
+        (PyObject_SetAttrString(__main__, "__annotations__", d) < 0)) {
+        PyErr_SetString(PyExc_ValueError,
+                    "Failed to initialize __main__.__annotations__");
+        return 0;
+    }
+    Py_DECREF(d);
+    return 1;
+}
+
+static int
 pymain_run_stdin(PyConfig *config, PyCompilerFlags *cf)
 {
     if (stdin_is_interactive(config)) {
@@ -509,6 +542,9 @@ pymain_run_stdin(PyConfig *config, PyCompilerFlags *cf)
         return pymain_exit_err_print();
     }
 
+    if (!pymain_setup_interactive_annotations())
+        return 0;
+
     int run = PyRun_AnyFileExFlags(stdin, "<stdin>", 0, cf);
     return (run != 0);
 }
@@ -531,6 +567,11 @@ pymain_repl(PyConfig *config, PyCompilerFlags *cf, int *exitcode)
     config->inspect = 0;
     Py_InspectFlag = 0;
     if (pymain_run_interactive_hook(exitcode)) {
+        return;
+    }
+
+    if (!pymain_setup_interactive_annotations()) {
+        *exitcode = -1;
         return;
     }
 

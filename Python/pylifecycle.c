@@ -1670,18 +1670,15 @@ Py_EndInterpreter(PyThreadState *tstate)
 static PyStatus
 add_main_module(PyInterpreterState *interp)
 {
-    PyObject *m, *d, *loader, *ann_dict;
+    PyObject *m, *d, *loader; // , *ann_dict;
     m = PyImport_AddModule("__main__");
     if (m == NULL)
         return _PyStatus_ERR("can't create __main__ module");
 
     d = PyModule_GetDict(m);
-    ann_dict = PyDict_New();
-    if ((ann_dict == NULL) ||
-        (PyDict_SetItemString(d, "__annotations__", ann_dict) < 0)) {
-        return _PyStatus_ERR("Failed to initialize __main__.__annotations__");
-    }
-    Py_DECREF(ann_dict);
+
+    // __annotations__ setup code moved to
+    // pymain_setup_interactive_annotations() in main.c
 
     if (PyDict_GetItemString(d, "__builtins__") == NULL) {
         PyObject *bimod = PyImport_ImportModule("builtins");
