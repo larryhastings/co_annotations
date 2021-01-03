@@ -2421,18 +2421,22 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
         return 0;
     }
 
+    struct annotations_scope_initializer saved_asi;
     if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
         /* backup and temporarily overwrite u_asi */
-        struct annotations_scope_initializer saved_asi = c->u->u_asi;
+        saved_asi = c->u->u_asi;
         SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, name, args, firstlineno, column);
+    }
 
-        annotations_flag = compiler_visit_annotations(c, args, returns);
-        if (annotations_flag == 0) {
-            return 0;
-        }
-        else if (annotations_flag > 0) {
-            funcflags |= annotations_flag;
-        }
+    annotations_flag = compiler_visit_annotations(c, args, returns);
+    if (annotations_flag == 0) {
+        return 0;
+    }
+    else if (annotations_flag > 0) {
+        funcflags |= annotations_flag;
+    }
+
+    if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
         c->u->u_asi = saved_asi;
     }
 
