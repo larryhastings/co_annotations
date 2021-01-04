@@ -904,46 +904,52 @@ type_get_text_signature(PyTypeObject *type, void *context)
 static PyObject *
 type_get_annotations(PyTypeObject *type, void *context)
 {
-    PyObject *annotations = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___annotations__);
-    PyObject *co_annotations = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___co_annotations__);
-    assert(!(annotations && co_annotations));
-    if (annotations) {
-        Py_INCREF(annotations);
-        return annotations;
-    }
-    if (co_annotations) {
-        PyObject *globals = _PyDict_GetItemIdWithError(type->tp_dict, &PyId___globals__);
-        if (globals) {
-            PyObject *fn = PyFunction_New(co_annotations, globals);
-            if (fn) {
-                PyObject *annotations = PyObject_CallFunction(fn, NULL);
-                Py_DECREF(fn);
-                if (annotations) {
-                    if (PyDict_Check(annotations)) {
-                        _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, annotations);
-                        _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
-                        return annotations;
-                    }
-                    Py_DECREF(annotations);
-                }
-            }
-            Py_DECREF(globals);
-        }
-    }
+    PyObject *return_value = NULL;
+    PyObject *mro = type->tp_mro;
+
     /*
     ** bug-for-bug compatibility!
-    ** if neither __annotations__ nor __co_annotations__ is set,
-    ** inherit annotations from our baes (if any).
+    ** if neither __annotations__ nor __co_annotations__
+    ** is set on us, we need to inherit it (them) from
+    ** our bases.
+    **
+    ** I remind you, gentle reader, that
+    **    kls.__mro__[0] == kls
     */
-    PyObject *return_value = NULL;
-    PyObject *bases = type->tp_bases;
-    Py_ssize_t bases_len = PyTuple_GET_SIZE(bases);
-    for (int i = 0; i < bases_len; i++) {
-        PyObject *base = PyTuple_GET_ITEM(bases, i);
-        return_value = _PyObject_GetAttrId(base, &PyId___annotations__);
-        if (return_value)
-            break;
+    if (mro) {
+        Py_ssize_t mro_len = PyTuple_GET_SIZE(mro);
+        for (int i = 0; i < mro_len; i++) {
+            PyTypeObject *kls = (PyTypeObject *)PyTuple_GET_ITEM(mro, i);
+
+            PyObject *annotations = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___annotations__);
+            PyObject *co_annotations = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___co_annotations__);
+            assert(!(annotations && co_annotations));
+            if (annotations) {
+                Py_INCREF(annotations);
+                return annotations;
+            }
+            if (co_annotations) {
+                PyObject *globals = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___globals__);
+                if (globals) {
+                    PyObject *fn = PyFunction_New(co_annotations, globals);
+                    if (fn) {
+                        PyObject *annotations = PyObject_CallFunction(fn, NULL);
+                        Py_DECREF(fn);
+                        if (annotations) {
+                            if (PyDict_Check(annotations)) {
+                                _PyDict_SetItemId(kls->tp_dict, &PyId___annotations__, annotations);
+                                _PyDict_DelItemId(kls->tp_dict, &PyId___co_annotations__);
+                                return annotations;
+                            }
+                            Py_DECREF(annotations);
+                        }
+                    }
+                    Py_DECREF(globals);
+                }
+            }
+        }
     }
+
     if (!return_value) {
         PyErr_Format(PyExc_AttributeError,
                      "type object '%.50s' has no attribute '__annotations__'",
