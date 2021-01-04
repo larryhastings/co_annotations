@@ -104,6 +104,12 @@ lookup_maybe_method(PyObject *self, _Py_Identifier *attrid, int *unbound);
 static int
 slot_tp_setattro(PyObject *self, PyObject *name, PyObject *value);
 
+static PyObject *
+type_getattro(PyTypeObject *type, PyObject *name);
+
+static int
+super_init(PyObject *self, PyObject *args, PyObject *kwds);
+
 /*
  * finds the beginning of the docstring's introspection signature.
  * if present, returns a pointer pointing to the first '('.
@@ -915,7 +921,6 @@ type_get_annotations(PyTypeObject *type, void *context)
                 if (annotations) {
                     if (PyDict_Check(annotations)) {
                         _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, annotations);
-                        /* TODO BUG this doesn't seem to del __co_annotations__ from tp_dict?!? */
                         _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
                         return annotations;
                     }
@@ -925,8 +930,26 @@ type_get_annotations(PyTypeObject *type, void *context)
             Py_DECREF(globals);
         }
     }
-    PyErr_Format(PyExc_AttributeError, "type object '%.50s' has no attribute '__annotations__'", type->tp_name);
-    return NULL;
+    /*
+    ** bug-for-bug compatibility!
+    ** if neither __annotations__ nor __co_annotations__ is set,
+    ** inherit annotations from our baes (if any).
+    */
+    PyObject *return_value = NULL;
+    PyObject *bases = type->tp_bases;
+    Py_ssize_t bases_len = PyTuple_GET_SIZE(bases);
+    for (int i = 0; i < bases_len; i++) {
+        PyObject *base = PyTuple_GET_ITEM(bases, i);
+        return_value = _PyObject_GetAttrId(base, &PyId___annotations__);
+        if (return_value)
+            break;
+    }
+    if (!return_value) {
+        PyErr_Format(PyExc_AttributeError,
+                     "type object '%.50s' has no attribute '__annotations__'",
+                     type->tp_name);
+    }
+    return return_value;
 }
 
 static int
