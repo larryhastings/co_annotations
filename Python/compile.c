@@ -1977,7 +1977,13 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
         if (c->u->u_popped_annotation_scope) {
             /* we must have hit an annotation, we have a scope. */
             compiler_enter_co_annotations_scope(c);
+            Py_ssize_t len = PyList_GET_SIZE(c->u->u_asi.names);
+            assert(len > 0);
+            PyObject *keytuple = PyList_AsTuple(c->u->u_asi.names);
+            ADDOP_LOAD_CONST_NEW(c, keytuple);
+            ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
             ADDOP(c, RETURN_VALUE);
+            Py_CLEAR(c->u->u_asi.names);
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
             ADDOP_LOAD_CONST(c, (PyObject*)co);
@@ -2554,7 +2560,15 @@ compiler_class(struct compiler *c, stmt_ty s)
         if (c->u->u_popped_annotation_scope) {
             /* we must have hit an annotation, we have a scope. */
             compiler_enter_co_annotations_scope(c);
+
+            Py_ssize_t len = PyList_GET_SIZE(c->u->u_asi.names);
+            assert(len > 0);
+            PyObject *keytuple = PyList_AsTuple(c->u->u_asi.names);
+            ADDOP_LOAD_CONST_NEW(c, keytuple);
+            ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
             ADDOP(c, RETURN_VALUE);
+            Py_CLEAR(c->u->u_asi.names);
+
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
             ADDOP_LOAD_CONST(c, (PyObject*)co);
@@ -5482,6 +5496,7 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                     return 0;
                 generate_co_annotation_bytecode = result > 0;
             }
+            mangled = _Py_Mangle(c->u->u_private, targ->v.Name.id);
             if (generate_co_annotation_bytecode) {
                 /*
                  * TODO:
@@ -5489,13 +5504,13 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                  * and BUILD_CONST_KEY_MAP
                  * the way compiler_visit_annotations does it
                  */
-                int need_build_map = (c->u->u_popped_annotation_scope == NULL);
-                if (need_build_map) {
-                    ADDOP_I(c, BUILD_MAP, 0);
+                if (c->u->u_asi.names == NULL) {
+                    c->u->u_asi.names = PyList_New(0);
+                    if (c->u->u_asi.names == NULL)
+                        return 0;
                 }
-                ADDOP(c, DUP_TOP);
                 VISIT(c, expr, s->v.AnnAssign.annotation);
-                ADDOP(c, ROT_TWO);
+                PyList_Append(c->u->u_asi.names, mangled);
             } else {
                 if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
                     VISIT(c, annexpr, s->v.AnnAssign.annotation)
@@ -5504,10 +5519,9 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                     VISIT(c, expr, s->v.AnnAssign.annotation);
                 }
                 ADDOP_NAME(c, LOAD_NAME, __annotations__, names);
+                ADDOP_LOAD_CONST_NEW(c, mangled);
+                ADDOP(c, STORE_SUBSCR);
             }
-            mangled = _Py_Mangle(c->u->u_private, targ->v.Name.id);
-            ADDOP_LOAD_CONST_NEW(c, mangled);
-            ADDOP(c, STORE_SUBSCR);
             if (generate_co_annotation_bytecode) {
                 if (!compiler_pop_co_annotations_scope(c))
                     return 0;

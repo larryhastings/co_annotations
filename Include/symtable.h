@@ -22,6 +22,7 @@ struct annotations_scope_initializer {
     void     *ast;        /* ast node for the enclosing block, used as a key for the ste */
     int       line;
     int       column;
+    PyObject *names;
 };
 
 #define INIT_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
@@ -29,6 +30,7 @@ struct annotations_scope_initializer {
     (asi).ast      = NULL; \
     (asi).line     =    0; \
     (asi).column   =    0; \
+    (asi).names    = NULL; \
 
 #define SET_ANNOTATIONS_SCOPE_INITIALIZER(asi, _basename, _ast, _line, _column) \
     /* Py_CLEAR((asi).basename); */ \
@@ -41,6 +43,7 @@ struct annotations_scope_initializer {
 
 #define CLEAR_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
     Py_CLEAR((asi).basename); \
+    Py_CLEAR((asi).names); \
     INIT_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
 
 struct symtable {
