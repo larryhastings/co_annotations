@@ -1677,9 +1677,6 @@ add_main_module(PyInterpreterState *interp)
 
     d = PyModule_GetDict(m);
 
-    // __annotations__ setup code moved to
-    // pymain_setup_interactive_annotations() in main.c
-
     if (PyDict_GetItemString(d, "__builtins__") == NULL) {
         PyObject *bimod = PyImport_ImportModule("builtins");
         if (bimod == NULL) {

@@ -486,13 +486,27 @@ error:
 static int
 pymain_setup_interactive_annotations()
 {
+    /*
+    ** It'd be nice to move this logic into the SETUP_ANNOTATIONS
+    ** logic in ceval.c.  After all, both blocks of code do exactly
+    ** the same thing, and Python always inserts a SETUP_ANNOTATIONS
+    ** bytecode whenever doing module-level annotations interactively.
+    ** (See compile.c, in compiler_body.)  But SETUP_ANNOTATIONS operates
+    ** strictly on the locals dict, and doesn't seem to know about the
+    ** class/module object, so I don't know what object I should tug on
+    ** with getattr(o, __annotations__) to get it to call co_annotations.
+    ** --larry
+    */
     _Py_IDENTIFIER(__main__);
     _Py_IDENTIFIER(__annotations__);
     _Py_IDENTIFIER(__co_annotations__);
     PyInterpreterState *interp = _PyInterpreterState_GET();
     PyObject *__main__ = _PyDict_GetItemIdWithError(interp->modules, &PyId___main__);
-    if (!__main__)
+    if (!__main__) {
+        PyErr_SetString(PyExc_ValueError,
+                    "Failed to find __main__ module");
         return 0;
+    }
 
     PyObject *already_set = _PyDict_GetItemIdWithError(__main__, &PyId___annotations__);
     if (already_set)
@@ -501,6 +515,11 @@ pymain_setup_interactive_annotations()
     PyObject *co_annotations = _PyDict_GetItemIdWithError(__main__, &PyId___co_annotations__);
     if (co_annotations) {
         PyObject *annotations = PyObject_GetAttrString(__main__, "__annotations__");
+        if (!annotations) {
+            PyErr_SetString(PyExc_ValueError,
+                        "Failed to initialize __main__.__annotations__ from  __main__.__co_annotations__");
+            return 0;
+        }
         Py_DECREF(annotations);
         return 1;
     }
