@@ -501,18 +501,18 @@ pymain_setup_interactive_annotations()
     _Py_IDENTIFIER(__annotations__);
     _Py_IDENTIFIER(__co_annotations__);
     PyInterpreterState *interp = _PyInterpreterState_GET();
-    PyObject *__main__ = _PyDict_GetItemIdWithError(interp->modules, &PyId___main__);
+    PyObject *__main__ = _PyDict_GetItemId(interp->modules, &PyId___main__);
     if (!__main__) {
         PyErr_SetString(PyExc_ValueError,
                     "Failed to find __main__ module");
         return 0;
     }
 
-    PyObject *already_set = _PyDict_GetItemIdWithError(__main__, &PyId___annotations__);
+    PyObject *already_set = _PyDict_GetItemId(__main__, &PyId___annotations__);
     if (already_set)
         return 1;
 
-    PyObject *co_annotations = _PyDict_GetItemIdWithError(__main__, &PyId___co_annotations__);
+    PyObject *co_annotations = _PyDict_GetItemId(__main__, &PyId___co_annotations__);
     if (co_annotations) {
         PyObject *annotations = PyObject_GetAttrString(__main__, "__annotations__");
         if (!annotations) {

@@ -2277,7 +2277,6 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty return
         ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
         return_value = annotations_fn_flag;
     }
-    Py_DECREF(names);
 
     if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
         ADDOP(c, RETURN_VALUE);

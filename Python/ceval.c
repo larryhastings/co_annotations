@@ -3848,7 +3848,7 @@ main_loop:
                 func ->func_closure = POP();
             }
             if (oparg & 0x10) {
-                assert(TOP()->ob_type == PyCode_Type);
+                assert(TOP()->ob_type == &PyCode_Type);
                 func->func_co_annotations = POP();
             }
             if (oparg & 0x04) {
