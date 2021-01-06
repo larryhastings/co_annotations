@@ -1207,7 +1207,7 @@ class CoAnnotationsTests(unittest.TestCase):
         source = """from __future__ import co_annotations
 
 def indirect(x):
-    return [str, int, complex][x]
+    return [float, complex, C][x]
 
 ma:int=3      # int
 mb:str="foo"  # str
@@ -1224,6 +1224,7 @@ class C:
     ce:indirect(2)=None
 """
         co = compile(source, "fakemodule.py", "exec")
+        dis.dis(co)
         dis_stream = io.StringIO()
         dis.dis(co, file=dis_stream)
         dis_output = dis_stream.getvalue().lstrip("\n").rstrip() + "\n"
@@ -1280,9 +1281,9 @@ class C:
              64 RETURN_VALUE
 
 Disassembly of """) + code_object_re("indirect") + quote_parens(""":
-  4           0 LOAD_GLOBAL              0 (str)
-              2 LOAD_GLOBAL              1 (int)
-              4 LOAD_GLOBAL              2 (complex)
+  4           0 LOAD_GLOBAL              0 (float)
+              2 LOAD_GLOBAL              1 (complex)
+              4 LOAD_GLOBAL              2 (C)
               6 BUILD_LIST               3
               8 LOAD_FAST                0 (x)
              10 BINARY_SUBSCR
