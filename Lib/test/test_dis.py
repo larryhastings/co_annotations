@@ -1207,7 +1207,7 @@ class CoAnnotationsTests(unittest.TestCase):
         source = """from __future__ import co_annotations
 
 def indirect(x):
-    return ["str", "int", "complex"]
+    return [str, int, complex][x]
 
 ma:int=3      # int
 mb:str="foo"  # str
@@ -1280,10 +1280,13 @@ class C:
              64 RETURN_VALUE
 
 Disassembly of """) + code_object_re("indirect") + quote_parens(""":
-  4           0 BUILD_LIST               0
-              2 LOAD_CONST               1 (('str', 'int', 'complex'))
-              4 LIST_EXTEND              1
-              6 RETURN_VALUE
+  4           0 LOAD_GLOBAL              0 (str)
+              2 LOAD_GLOBAL              1 (int)
+              4 LOAD_GLOBAL              2 (complex)
+              6 BUILD_LIST               3
+              8 LOAD_FAST                0 (x)
+             10 BINARY_SUBSCR
+             12 RETURN_VALUE
 
 Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""":
   6           0 LOAD_GLOBAL              0 (int)
