@@ -413,13 +413,17 @@ if 1:
     def test_co_annotations(self):
         s = """from __future__ import co_annotations
 
-def fn(a:int=3, b:str="foo", c:C=None):
+def indirect(n):
+    return [complex, type][n]
+
+def fn(a:int=3, b:str="foo", c:C=None, e:indirect(0)=None):
     pass
 
 class C:
     ca:int=3
     cb:str="foo"
     cc:C=None
+    ce:indirect(1)=None
 """
         co = compile(s, "string s", "exec")
 
@@ -434,12 +438,14 @@ class C:
             "a": int,
             "b": str,
             "c": C,
+            "e": complex,
             })
         self.assertDictEqual(C.__annotations__,
             {
             "ca": int,
             "cb": str,
             "cc": C,
+            "ce": type,
             })
 
 
