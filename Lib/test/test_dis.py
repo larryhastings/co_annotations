@@ -5,7 +5,10 @@ from test.support.bytecode_helper import BytecodeTestCase
 import unittest
 import sys
 import dis
+import glob
 import io
+import os.path
+import marshal
 import re
 import types
 import contextlib
@@ -1197,6 +1200,163 @@ class BytecodeTests(unittest.TestCase):
         tb = get_tb()
         b = dis.Bytecode.from_traceback(tb)
         self.assertEqual(b.dis(), dis_traceback)
+
+class CoAnnotationsTests(unittest.TestCase):
+
+    def test_co_annotations_codegen(self):
+        source = """from __future__ import co_annotations
+
+def indirect(x):
+    return ["str", "int", "complex"]
+
+ma:int=3      # int
+mb:str="foo"  # str
+mc:C=None     # forward reference
+me:indirect(0)=None   # expression
+
+def fn(fna:int=3, fnb:str="foo", fnc:C=None, fne:indirect(1)=None):
+    pass
+
+class C:
+    ca:int=3
+    cb:str="foo"
+    cc:C=None
+    ce:indirect(2)=None
+"""
+        co = compile(source, "fakemodule.py", "exec")
+        dis_stream = io.StringIO()
+        dis.dis(co, file=dis_stream)
+        dis_output = dis_stream.getvalue().lstrip("\n").rstrip() + "\n"
+
+        def code_object_re(name):
+            return "<code object .*" + re.escape(name) + " at 0x[0-9abcdef]{8,16}, file \".+\", line [0-9]+>"
+
+        def dissasembly_of(name):
+            return re.escape("<code object ") + ".*" + re.escape(name) + " at 0x[0-9abcdef]{8,16}, file \".*\", line [0-9]+" + re.escape(">")
+
+        def quote_parens(s):
+            return s.replace("(", "\\(").replace(")", "\\)")
+
+        regex = quote_parens("""
+  1           0 LOAD_CONST               0 (0)
+              2 LOAD_CONST               1 (('co_annotations',))
+              4 IMPORT_NAME              0 (__future__)
+              6 IMPORT_FROM              1 (co_annotations)
+              8 STORE_NAME               1 (co_annotations)
+             10 POP_TOP
+
+  3          12 LOAD_CONST               2 (""".lstrip("\n")) + code_object_re("indirect") + quote_parens(""")
+             14 LOAD_CONST               3 ('indirect')
+             16 MAKE_FUNCTION            0
+             18 STORE_NAME               2 (indirect)
+
+  6          20 LOAD_CONST               4 (3)
+             22 STORE_NAME               3 (ma)
+
+  7          24 LOAD_CONST               5 ('foo')
+             26 STORE_NAME               4 (mb)
+
+  8          28 LOAD_CONST               6 (None)
+             30 STORE_NAME               5 (mc)
+
+  9          32 LOAD_CONST               6 (None)
+             34 STORE_NAME               6 (me)
+
+ 11          36 LOAD_CONST              12 ((3, 'foo', None, None))
+             38 LOAD_CONST               7 (""") + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""")
+             40 LOAD_CONST               8 (""") + code_object_re("fn") + quote_parens(""")
+             42 LOAD_CONST               9 ('fn')
+             44 MAKE_FUNCTION           17 (defaults, co_annotations)
+             46 STORE_NAME               7 (fn)
+
+ 14          48 LOAD_BUILD_CLASS
+             50 LOAD_CONST              10 (""") + code_object_re("C") + quote_parens(""")
+             52 LOAD_CONST              11 ('C')
+             54 MAKE_FUNCTION            0
+             56 LOAD_CONST              11 ('C')
+             58 CALL_FUNCTION            2
+             60 STORE_NAME               8 (C)
+             62 LOAD_CONST               6 (None)
+             64 RETURN_VALUE
+
+Disassembly of """) + code_object_re("indirect") + quote_parens(""":
+  4           0 BUILD_LIST               0
+              2 LOAD_CONST               1 (('str', 'int', 'complex'))
+              4 LIST_EXTEND              1
+              6 RETURN_VALUE
+
+Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""":
+  6           0 LOAD_GLOBAL              0 (int)
+
+  7           2 LOAD_GLOBAL              1 (str)
+
+  8           4 LOAD_GLOBAL              2 (C)
+
+  9           6 LOAD_GLOBAL              3 (indirect)
+              8 LOAD_CONST               0 (0)
+             10 CALL_FUNCTION            1
+
+ 11          12 LOAD_GLOBAL              0 (int)
+             14 LOAD_GLOBAL              1 (str)
+             16 LOAD_GLOBAL              2 (C)
+             18 LOAD_GLOBAL              3 (indirect)
+             20 LOAD_CONST               1 (1)
+             22 CALL_FUNCTION            1
+             24 LOAD_CONST               2 (('fna', 'fnb', 'fnc', 'fne'))
+             26 BUILD_CONST_KEY_MAP      4
+             28 RETURN_VALUE
+
+Disassembly of """) + code_object_re("fn") + quote_parens(""":
+ 12           0 LOAD_CONST               0 (None)
+              2 RETURN_VALUE
+
+Disassembly of """) + code_object_re("C") + quote_parens(""":
+ 14           0 LOAD_NAME                0 (__name__)
+              2 STORE_NAME               1 (__module__)
+              4 LOAD_CONST               0 ('C')
+              6 STORE_NAME               2 (__qualname__)
+
+ 15           8 LOAD_CONST               1 (3)
+             10 STORE_NAME               3 (ca)
+
+ 16          12 LOAD_CONST               2 ('foo')
+             14 STORE_NAME               4 (cb)
+
+ 17          16 LOAD_CONST               3 (None)
+             18 STORE_NAME               5 (cc)
+
+ 18          20 LOAD_CONST               3 (None)
+             22 STORE_NAME               6 (ce)
+             24 LOAD_CONST               4 (""") + code_object_re("C.__co_annotations__") + quote_parens(""")
+             26 STORE_NAME               7 (__co_annotations__)
+             28 LOAD_GLOBAL              8 (globals)
+             30 CALL_FUNCTION            0
+             32 STORE_NAME               9 (__globals__)
+             34 LOAD_CONST               3 (None)
+             36 RETURN_VALUE
+
+Disassembly of """) + code_object_re("C.__co_annotations__") + quote_parens(""":
+ 15           0 LOAD_GLOBAL              0 (int)
+
+ 16           2 LOAD_GLOBAL              1 (str)
+
+ 17           4 LOAD_GLOBAL              2 (C)
+
+ 18           6 LOAD_GLOBAL              3 (indirect)
+              8 LOAD_CONST               0 (2)
+             10 CALL_FUNCTION            1
+             12 LOAD_CONST               1 (('ca', 'cb', 'cc', 'ce'))
+             14 BUILD_CONST_KEY_MAP      4
+             16 RETURN_VALUE
+
+
+
+""".rstrip())
+        regex = regex + "\n"
+
+        s =" ".join(dis_output.split("\n"))
+        r = " ".join(regex.split("\n"))
+        self.assertRegex(s, r)
 
 if __name__ == "__main__":
     unittest.main()

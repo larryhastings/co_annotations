@@ -410,6 +410,39 @@ if 1:
         s %= ', '.join('a%d:%d' % (i,i) for i in range(300))
         compile(s, '?', 'exec')
 
+    def test_co_annotations(self):
+        s = """from __future__ import co_annotations
+
+def fn(a:int=3, b:str="foo", c:C=None):
+    pass
+
+class C:
+    ca:int=3
+    cb:str="foo"
+    cc:C=None
+"""
+        co = compile(s, "string s", "exec")
+
+        g = {}
+        exec(co, g)
+
+        fn = g['fn']
+        C = g['C']
+
+        self.assertDictEqual(fn.__annotations__,
+            {
+            "a": int,
+            "b": str,
+            "c": C,
+            })
+        self.assertDictEqual(C.__annotations__,
+            {
+            "ca": int,
+            "cb": str,
+            "cc": C,
+            })
+
+
     def test_mangling(self):
         class A:
             def f():
