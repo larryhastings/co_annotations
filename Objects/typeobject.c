@@ -921,15 +921,15 @@ type_get_annotations(PyTypeObject *type, void *context)
         for (int i = 0; i < mro_len; i++) {
             PyTypeObject *kls = (PyTypeObject *)PyTuple_GET_ITEM(mro, i);
 
-            PyObject *annotations = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___annotations__);
-            PyObject *co_annotations = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___co_annotations__);
+            PyObject *annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___annotations__);
+            PyObject *co_annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___co_annotations__);
             assert(!(annotations && co_annotations));
             if (annotations) {
                 Py_INCREF(annotations);
                 return annotations;
             }
             if (co_annotations) {
-                PyObject *globals = _PyDict_GetItemIdWithError(kls->tp_dict, &PyId___globals__);
+                PyObject *globals = _PyDict_GetItemId(kls->tp_dict, &PyId___globals__);
                 if (globals) {
                     PyObject *fn = PyFunction_New(co_annotations, globals);
                     if (fn) {
@@ -939,6 +939,9 @@ type_get_annotations(PyTypeObject *type, void *context)
                             if (PyDict_Check(annotations)) {
                                 _PyDict_SetItemId(kls->tp_dict, &PyId___annotations__, annotations);
                                 _PyDict_DelItemId(kls->tp_dict, &PyId___co_annotations__);
+                                // we don't need to incref here:
+                                // pydict_setitem takes a reference
+                                // so we're returning the reference we got from PyObject_CallFunction
                                 return annotations;
                             }
                             Py_DECREF(annotations);
@@ -969,7 +972,7 @@ type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
         return 0;
     }
 
-    if (_PyDict_GetItemIdWithError(type->tp_dict, &PyId___annotations__)) {
+    if (_PyDict_GetItemId(type->tp_dict, &PyId___annotations__)) {
         _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
         return 0;
     }

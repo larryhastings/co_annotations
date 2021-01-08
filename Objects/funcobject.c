@@ -215,6 +215,8 @@ evaluate_co_annotations(PyFunctionObject *func)
                 if (PyDict_Check(annotations)) {
                     func->func_annotations = annotations;
                     Py_CLEAR(func->func_co_annotations);
+                    // no need to incref, our reference is
+                    // now owned by the func object
                     return 1;
                 }
                 Py_DECREF(annotations);
@@ -234,7 +236,9 @@ PyFunction_GetAnnotations(PyObject *op)
     }
     if (!evaluate_co_annotations((PyFunctionObject *)op))
         return NULL;
-    return ((PyFunctionObject *) op) -> func_annotations;
+    PyObject *annotations = ((PyFunctionObject *)op)->func_annotations;
+    Py_INCREF(annotations);
+    return annotations;
 }
 
 int

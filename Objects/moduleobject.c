@@ -832,8 +832,8 @@ static PyMethodDef module_methods[] = {
 static PyObject *
 module_get_annotations(PyModuleObject *m, void *context)
 {
-    PyObject *annotations = _PyDict_GetItemIdWithError(m->md_dict, &PyId___annotations__);
-    PyObject *co_annotations = _PyDict_GetItemIdWithError(m->md_dict, &PyId___co_annotations__);
+    PyObject *annotations = _PyDict_GetItemId(m->md_dict, &PyId___annotations__);
+    PyObject *co_annotations = _PyDict_GetItemId(m->md_dict, &PyId___co_annotations__);
     PyObject *mod_name = _PyDict_GetItemId(m->md_dict, &PyId___name__);
     assert(!(annotations && co_annotations));
     if (annotations) {
@@ -848,8 +848,10 @@ module_get_annotations(PyModuleObject *m, void *context)
             if (annotations) {
                 if (PyDict_Check(annotations)) {
                     _PyDict_SetItemId(m->md_dict, &PyId___annotations__, annotations);
-                    /* TODO BUG this doesn't seem to del __co_annotations__ from md_dict?!? */
                     _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
+                    // we don't need to incref here:
+                    // pydict_setitem takes a reference
+                    // so we're returning the reference we got from PyObject_CallFunction
                     return annotations;
                 }
                 Py_DECREF(annotations);

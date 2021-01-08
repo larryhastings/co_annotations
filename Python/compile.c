@@ -1986,6 +1986,12 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
             Py_CLEAR(c->u->u_asi.names);
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
+            if (co->co_flags & CO_GENERATOR) {
+                _Py_FatalErrorFormat(__func__,
+                    "yield used in annotation for module \"%s\"",
+                    PyUnicode_AsUTF8(module),
+                    );
+            }
             ADDOP_LOAD_CONST(c, (PyObject*)co);
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
         }
@@ -2282,6 +2288,12 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty return
         ADDOP(c, RETURN_VALUE);
         PyCodeObject *co = assemble(c, 0);
         compiler_exit_co_annotations_scope(c);
+        if (co->co_flags & CO_GENERATOR) {
+            _Py_FatalErrorFormat(__func__,
+                "yield used in annotation for function \"%s\"",
+                PyUnicode_AsUTF8(c->u->u_asi->u_name),
+                );
+        }
         ADDOP_LOAD_CONST(c, (PyObject*)co);
         return_value = annotations_fn_flag;
     }
@@ -2570,6 +2582,12 @@ compiler_class(struct compiler *c, stmt_ty s)
 
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
+            if (co->co_flags & CO_GENERATOR) {
+                _Py_FatalErrorFormat(__func__,
+                    "yield used in annotation for class \"%s\"",
+                    PyUnicode_AsUTF8(c->u->u_asi->u_name),
+                    );
+            }
             ADDOP_LOAD_CONST(c, (PyObject*)co);
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
             ADDOP_NAME(c, LOAD_GLOBAL, globals_identifier, names);

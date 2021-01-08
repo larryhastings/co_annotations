@@ -2983,6 +2983,18 @@ class TestStringAnnotations(unittest.TestCase):
              'return': type(None)})
 
 
+    def test_co_annotations(self):
+        from test import dataclass_co_annotations
+
+        self.assertEqual(
+            dataclass_co_annotations.Bar.__annotations__,
+            {'foo': dataclass_co_annotations.Foo})
+        self.assertEqual(
+            dataclass_co_annotations.Bar.__init__.__annotations__,
+            {'foo': dataclass_co_annotations.Foo,
+             'return': None})
+
+
 class TestMakeDataclass(unittest.TestCase):
     def test_simple(self):
         C = make_dataclass('C',
