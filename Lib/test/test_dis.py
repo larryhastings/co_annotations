@@ -1224,7 +1224,6 @@ class C:
     ce:indirect(2)=None
 """
         co = compile(source, "fakemodule.py", "exec")
-        dis.dis(co)
         dis_stream = io.StringIO()
         dis.dis(co, file=dis_stream)
         dis_output = dis_stream.getvalue().lstrip("\n").rstrip() + "\n"
