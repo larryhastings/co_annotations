@@ -1844,18 +1844,11 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
     {
         int flag;
         if (st->st_cur->ste_is_co_annotation_block) {
-            assert(e->v.Name.ctx == Load);
+            if (e->v.Name.ctx != Load) {
+                PyErr_SetString(PyExc_SyntaxError, "walrus operator (:=) is illegal inside annotation");
+                VISIT_QUIT(st, 0);
+            }
             flag = DEF_GLOBAL | USE;
-
-// {
-//     // TODO REMOVE ME
-//     Py_UCS4 buffer[256];
-//     buffer[0] = 0;
-
-//     PyUnicode_AsUCS4(e->v.Name.id, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
-//     printf("symtable_visit_expr \"%ls\" flag is forced to DEF_GLOBAL %d\n", buffer, flag);
-// }
-
         } else {
             flag = (e->v.Name.ctx == Load) ? USE : DEF_LOCAL;
         }

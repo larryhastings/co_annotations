@@ -49,7 +49,9 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->func_dict = NULL;
     op->func_module = NULL;
     op->func_annotations = NULL;
-    op->func_co_annotations = NULL;
+
+    op->func_co_annotations = Py_None;
+    Py_INCREF(Py_None);
 
     /* __module__: If module name is in globals, use it.
        Otherwise, use None. */
@@ -202,29 +204,62 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
 }
 
 
+/*
+** Returns 0 on success, -1 on error.
+** success doesn't indicate whether or not we successfully
+** bound func_co_annotations, merely that we encountered no errors.
+** (func_co_annotations might be None.)
+*/
 static inline int
-evaluate_co_annotations(PyFunctionObject *func)
+bind_co_annotations(PyFunctionObject *func)
 {
-    assert(!(func->func_annotations && func->func_co_annotations));
-    if ((!func->func_annotations) && func->func_co_annotations) {
+    assert(func->func_co_annotations);
+    if (func->func_co_annotations == Py_None)
+        return 0;
+    if (PyCode_Check(func->func_co_annotations)) {
         PyObject *fn = PyFunction_New(func->func_co_annotations, func->func_globals);
-        if (fn) {
-            PyObject *annotations = PyObject_CallFunction(fn, NULL);
-            Py_DECREF(fn);
-            if (annotations) {
-                if (PyDict_Check(annotations)) {
-                    func->func_annotations = annotations;
-                    Py_CLEAR(func->func_co_annotations);
-                    // no need to incref, our reference is
-                    // now owned by the func object
-                    return 1;
-                }
-                Py_DECREF(annotations);
-            }
-        }
+        if (!fn)
+            return -1;
+        Py_DECREF(func->func_co_annotations);
+        func->func_co_annotations = fn;
         return 0;
     }
-    return 1;
+    return PyCallable_Check(func->func_co_annotations) ? 0 : -1;
+}
+
+
+/*
+** Returns 0 on success, -1 on error.
+** success doesn't indicate whether or not we have
+** annotations, merely that we encountered no errors.
+** if we succeeded, func_annotations will be non-NULL.
+*/
+static inline int
+ensure_annotations(PyFunctionObject *func)
+{
+    assert(func->func_co_annotations);
+    if (func->func_annotations)
+        return 0;
+    if (bind_co_annotations(func))
+        return -1;
+    if (func->func_co_annotations != Py_None) {
+        PyObject *annotations = PyObject_CallFunction(func->func_co_annotations, NULL);
+        if (annotations) {
+            if (PyDict_Check(annotations)) {
+                if (func->func_annotations)
+                    Py_DECREF(Py_None);
+                func->func_annotations = annotations;
+
+                Py_DECREF(func->func_co_annotations);
+                func->func_co_annotations = Py_None;
+                Py_INCREF(Py_None);
+                return 0;
+            }
+            Py_DECREF(annotations);
+        }
+        return -1;
+    }
+    return 0;
 }
 
 PyObject *
@@ -234,11 +269,10 @@ PyFunction_GetAnnotations(PyObject *op)
         PyErr_BadInternalCall();
         return NULL;
     }
-    if (!evaluate_co_annotations((PyFunctionObject *)op))
+    PyFunctionObject *func = (PyFunctionObject *)op;
+    if (ensure_annotations(func))
         return NULL;
-    PyObject *annotations = ((PyFunctionObject *)op)->func_annotations;
-    Py_INCREF(annotations);
-    return annotations;
+    return func->func_annotations;
 }
 
 int
@@ -248,9 +282,9 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
         PyErr_BadInternalCall();
         return -1;
     }
-    Py_CLEAR(((PyFunctionObject *)op)->func_co_annotations);
-    if (annotations == Py_None)
+    if (annotations == Py_None) {
         annotations = NULL;
+    }
     else if (annotations && PyDict_Check(annotations)) {
         Py_INCREF(annotations);
     }
@@ -259,7 +293,13 @@ PyFunction_SetAnnotations(PyObject *op, PyObject *annotations)
                         "non-dict annotations");
         return -1;
     }
-    Py_XSETREF(((PyFunctionObject *)op)->func_annotations, annotations);
+    PyFunctionObject *func = (PyFunctionObject *)op;
+    Py_XSETREF(func->func_annotations, annotations);
+    assert(func->func_co_annotations != NULL);
+    if (func->func_co_annotations != Py_None) {
+        Py_SETREF(func->func_co_annotations, Py_None);
+        Py_INCREF(Py_None);
+    }
     return 0;
 }
 
@@ -448,7 +488,9 @@ func_set_kwdefaults(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignor
 static PyObject *
 func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
-    if (!evaluate_co_annotations(op))
+    assert(op->func_co_annotations);
+    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
+    if (ensure_annotations(op))
         return NULL;
     if (op->func_annotations == NULL) {
         op->func_annotations = PyDict_New();
@@ -462,7 +504,8 @@ func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 static int
 func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
-    Py_CLEAR(op->func_co_annotations);
+    assert(op->func_co_annotations);
+    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_annotations.
@@ -475,15 +518,22 @@ func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(igno
     }
     Py_XINCREF(value);
     Py_XSETREF(op->func_annotations, value);
+    if (value && (op->func_co_annotations != Py_None)) {
+        Py_DECREF(op->func_co_annotations);
+        op->func_co_annotations = Py_None;
+        Py_INCREF(Py_None);
+    }
+
     return 0;
 }
 
 static PyObject *
 func_get_co_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
-    if (!op->func_co_annotations) {
-        Py_RETURN_NONE;
-    }
+    assert(op->func_co_annotations);
+    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
+    if (bind_co_annotations(op))
+        return NULL;
     Py_INCREF(op->func_co_annotations);
     return op->func_co_annotations;
 }
@@ -491,15 +541,21 @@ func_get_co_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 static int
 func_set_co_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
-    if (value == Py_None)
-        value = NULL;
-    if ((value != NULL) && (value->ob_type != &PyCode_Type)) {
+    assert(op->func_co_annotations);
+    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
+    if (value == NULL) {
         PyErr_SetString(PyExc_TypeError,
-            "__co_annotations__ must be set to a code object");
+            "can't delete __co_annotations__ attribute");
+        return -1;
+    }
+    if (!(PyCallable_Check(value) || (value == Py_None))) {
+        PyErr_SetString(PyExc_TypeError,
+            "__co_annotations__ must be set to a callable or None");
         return -1;
     }
     Py_XINCREF(value);
     Py_XSETREF(op->func_co_annotations, value);
+    Py_CLEAR(op->func_annotations);
     return 0;
 }
 
