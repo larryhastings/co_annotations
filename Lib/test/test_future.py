@@ -9,6 +9,7 @@ from textwrap import dedent
 import os
 import re
 import sys
+import types
 
 rx = re.compile(r'\((\S+).py, line (\d+)')
 
@@ -342,6 +343,180 @@ class AnnotationsFutureTestCase(unittest.TestCase):
         self.assertAnnotationEqual("'inf'")
         self.assertAnnotationEqual("('inf', 1e1000, 'infxxx', 1e1000j)", expected=f"('inf', {inf}, 'infxxx', {infj})")
         self.assertAnnotationEqual("(1e1000, (1e1000j,))", expected=f"({inf}, ({infj},))")
+
+o_was_deleted = False
+from test import future_co_annotations
+
+class CoAnnotationsFutureTestCase(unittest.TestCase):
+
+    def _test(self, o):
+
+        def pre_dict_able():
+            return {'predict': int, 'able': str}
+
+        ##
+        ## this test scaffolding relies on instant object destruction.
+        ## sorry, gilectomy!
+        ##
+        class CallableWithDelNotification:
+            def __init__(self):
+                global o_was_deleted
+                o_was_deleted = False
+
+            def __del__(self):
+                global o_was_deleted
+                o_was_deleted = True
+
+            def __call__(self):
+                raise RuntimeError("CallableWithDelNotification should never be called")
+
+        class DictWithDelNotification(dict):
+            def __init__(self):
+                super().__init__()
+                global o_was_deleted
+                o_was_deleted = False
+
+            def __del__(self):
+                global o_was_deleted
+                o_was_deleted = True
+
+        # smoke test:
+        # all the predefined annotations dicts should have 3 elements
+        # and their values should be of the form
+        #   "{name}_{type}" = type
+        self.assertTrue(callable(o.__co_annotations__))
+        self.assertIsInstance(o.__co_annotations__, types.FunctionType)
+        value = o.__co_annotations__
+        self.assertEqual(o.__co_annotations__, value)
+        self.assertIsInstance(o.__annotations__, dict)
+        self.assertIsNone(o.__co_annotations__)
+        for name, value in o.__annotations__.items():
+            self.assertIsInstance(value, type)
+            self.assertEqual(name.partition("_")[2], value.__name__)
+
+        # setting __co_annotations__ to a function should work as expected
+        o.__co_annotations__ = pre_dict_able
+        self.assertEqual(o.__co_annotations__, pre_dict_able)
+        self.assertEqual(o.__annotations__, pre_dict_able())
+        self.assertIsNone(o.__co_annotations__)
+
+        # you can set __co_annotations__ to a lambda!
+        o.__co_annotations__ = lambda: {'x': int}
+        self.assertDictEqual(o.__annotations__, {'x': int})
+        self.assertIsNone(o.__co_annotations__)
+
+        # you can set __co_annotations__ to a method!
+        class UselessClass:
+            def make_dict(self):
+                return {'x': int, 'y': str}
+        uc = UselessClass()
+
+        o.__co_annotations__ = uc.make_dict
+        self.assertDictEqual(o.__annotations__, uc.make_dict())
+        self.assertIsNone(o.__co_annotations__)
+
+        # you can set __co_annotations__ to a type!
+        o.__co_annotations__ = dict
+        self.assertDictEqual(o.__annotations__, {})
+        self.assertIsNone(o.__co_annotations__)
+
+        # you can set __co_annotations__ to a closure!
+        def outer(d):
+            def inner():
+                return d
+            return inner
+        d = {'name': float, 'name2': complex}
+        o.__co_annotations__ = outer(d)
+        self.assertDictEqual(o.__annotations__, d)
+        self.assertIsNone(o.__co_annotations__)
+
+        # setting __annotations__ unsets __co_annotations__!
+        o.__co_annotations__ = pre_dict_able
+        o.__annotations__ = pre_dict_able()
+        self.assertIsNone(o.__co_annotations__)
+
+        # let's confirm that another way
+        o.__co_annotations__ = CallableWithDelNotification()
+        self.assertFalse(o_was_deleted)
+        o.__annotations__ = {}
+        self.assertTrue(o_was_deleted)
+
+        def assert_annotations_was_deleted():
+            sentinel = object()
+            if isinstance(o, types.FunctionType):
+                # functions re-generate an empty annotations dict
+                # when you delete them
+                result = {}
+            else:
+                result = sentinel
+            self.assertEqual(getattr(o, "__annotations__", sentinel), result)
+
+        # setting __co_annotations__ unsets __annotations__!
+        o.__annotations__ = pre_dict_able()
+        o.__co_annotations__ = pre_dict_able
+        o.__co_annotations__ = None
+        assert_annotations_was_deleted()
+
+
+        # let's confirm that another way
+        o.__annotations__ = DictWithDelNotification()
+        self.assertFalse(o_was_deleted)
+        o.__co_annotations__ = pre_dict_able
+        self.assertTrue(o_was_deleted)
+
+
+        # you can't delete __co_annotations__.
+        with self.assertRaises(TypeError):
+            del o.__co_annotations__
+
+        # you can delete __co_annotations__.
+        o.__annotations__ = {}
+        del o.__annotations__
+        assert_annotations_was_deleted()
+
+        # __co_annotations__ and __annotations__ are both strict
+        # about what values you can set them to.
+        class Subclass:
+            pass
+
+        for value in (
+                1+2j,
+                3.5,
+                ("foo","bar"),
+                [1,2,3],
+                object(),
+                Subclass(),
+                set(),
+                pre_dict_able.__code__, # code object
+                {},
+
+                # these values might work
+                pre_dict_able,
+                None,
+                dict,
+
+            ):
+            # you can only set __co_annotations__ to either None or a callable
+            if callable(value) or (value == None):
+                o.__co_annotations__ = value
+                self.assertEqual(o.__co_annotations__, value, f"failed with value {value}")
+            else:
+                with self.assertRaises(TypeError, msg=f"shouldn't have worked with value {value}"):
+                    o.__co_annotations__ = value
+
+
+    def test_function(self):
+        self._test(future_co_annotations.fn)
+
+        del future_co_annotations.fn.__annotations__
+        assert future_co_annotations.fn.__annotations__ == {}
+
+    def test_class(self):
+        self._test(future_co_annotations.MyType)
+
+    def test_module(self):
+        self._test(future_co_annotations)
+
 
 
 if __name__ == "__main__":

@@ -834,57 +834,117 @@ module_get_annotations(PyModuleObject *m, void *context)
 {
     PyObject *annotations = _PyDict_GetItemId(m->md_dict, &PyId___annotations__);
     PyObject *co_annotations = _PyDict_GetItemId(m->md_dict, &PyId___co_annotations__);
-    PyObject *mod_name = _PyDict_GetItemId(m->md_dict, &PyId___name__);
-    assert(!(annotations && co_annotations));
+    PyObject *return_value = NULL;
+
+    int co_annotations_is_set = co_annotations && (co_annotations != Py_None);
+    assert(!(annotations && co_annotations_is_set));
     if (annotations) {
         Py_INCREF(annotations);
         return annotations;
     }
-    if (co_annotations) {
-        PyObject *fn = PyFunction_New(co_annotations, m->md_dict);
-        if (fn) {
-            PyObject *annotations = PyObject_CallFunction(fn, NULL);
-            Py_DECREF(fn);
+    if (co_annotations_is_set) {
+        PyObject *decref_me = NULL;
+        PyObject *callable = NULL;
+
+        if (PyCallable_Check(co_annotations)) {
+            callable = co_annotations;
+        } else if (PyCode_Check(co_annotations)) {
+            callable = decref_me = PyFunction_New(co_annotations, m->md_dict);
+        }
+
+        if (callable) {
+            PyObject *annotations = PyObject_CallFunction(callable, NULL);
             if (annotations) {
                 if (PyDict_Check(annotations)) {
                     _PyDict_SetItemId(m->md_dict, &PyId___annotations__, annotations);
                     _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
-                    // we don't need to incref here:
-                    // pydict_setitem takes a reference
-                    // so we're returning the reference we got from PyObject_CallFunction
-                    return annotations;
+                    return_value = annotations;
+                } else {
+                    Py_DECREF(annotations);
                 }
-                Py_DECREF(annotations);
             }
         }
+        Py_XDECREF(decref_me);
     }
-    PyErr_Format(PyExc_AttributeError, "module object '%U' has no attribute '__annotations__'", mod_name);
-    return NULL;
+
+    if (!return_value) {
+        PyObject *mod_name = _PyDict_GetItemId(m->md_dict, &PyId___name__);
+        PyErr_Format(PyExc_AttributeError, "module object '%U' has no attribute '__annotations__'", mod_name);
+    }
+    return return_value;
 }
 
 static int
 module_set_annotations(PyModuleObject *m, PyObject *value, void *context)
 {
-    _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
-    PyErr_Clear();
-
-    if (value) {
+    if (!value) {
+        if (_PyDict_GetItemId(m->md_dict, &PyId___annotations__)) {
+            _PyDict_DelItemId(m->md_dict, &PyId___annotations__);
+            return 0;
+        }
+        PyErr_Format(PyExc_AttributeError, "__annotations__");
+        return -1;
+    }
+    if (PyDict_Check(value)) {
         _PyDict_SetItemId(m->md_dict, &PyId___annotations__, value);
+        if (_PyDict_GetItemId(m->md_dict, &PyId___co_annotations__))
+            _PyDict_DelItemId(m->md_dict, &PyId___co_annotations__);
         return 0;
     }
-
-    if (_PyDict_GetItemIdWithError(m->md_dict, &PyId___annotations__)) {
-        _PyDict_DelItemId(m->md_dict, &PyId___annotations__);
-        return 0;
-    }
-
-    PyErr_Format(PyExc_AttributeError, "__annotations__");
+    PyErr_SetString(
+        PyExc_TypeError,
+        "__annotations__ must be a dict");
     return -1;
+}
+
+
+static PyObject *
+module_get_co_annotations(PyModuleObject *m, void *context)
+{
+    PyObject *co_annotations = _PyDict_GetItemId(m->md_dict, &PyId___co_annotations__);
+    if (!co_annotations) {
+        co_annotations = Py_None;
+        Py_INCREF(Py_None);
+    } else if (PyCode_Check(co_annotations)) {
+        PyObject *callable = PyFunction_New(co_annotations, m->md_dict);
+        if (!callable) {
+            PyErr_Format(PyExc_AttributeError, "__co_annotations__");
+            return NULL;
+        }
+        co_annotations = callable;
+        _PyDict_SetItemId(m->md_dict, &PyId___co_annotations__, callable);
+    } else {
+        assert((co_annotations == Py_None) || PyCallable_Check(co_annotations));
+        Py_INCREF(co_annotations);
+    }
+
+    return co_annotations;
+}
+
+static int
+module_set_co_annotations(PyModuleObject *m, PyObject *value, void *context)
+{
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "can't delete __co_annotations__ attribute");
+        return -1;
+    }
+    if (!(PyCallable_Check(value) || (value == Py_None))) {
+        PyErr_SetString(PyExc_TypeError,
+            "__co_annotations__ must be set to a callable or None");
+        return -1;
+    }
+    _PyDict_SetItemId(m->md_dict, &PyId___co_annotations__, value);
+    if ((value != Py_None)
+        && _PyDict_GetItemId(m->md_dict, &PyId___annotations__))
+        _PyDict_DelItemId(m->md_dict, &PyId___annotations__);
+    return 0;
 }
 
 
 static PyGetSetDef module_getsets[] = {
     {"__annotations__", (getter)module_get_annotations, (setter)module_set_annotations, NULL},
+    {"__co_annotations__", (getter)module_get_co_annotations, (setter)module_set_co_annotations, NULL},
     {0}
 };
 

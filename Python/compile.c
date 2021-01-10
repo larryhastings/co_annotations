@@ -612,15 +612,6 @@ compiler_enter_scope(struct compiler *c, identifier name,
     struct compiler_unit *u;
     basicblock *block;
 
-// {
-//     // TODO REMOVE ME
-//     Py_UCS4 buffer[256];
-//     buffer[0] = 0;
-
-//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
-//     printf(">> compiler_enter_scope name \"%ls\" -> key %p\n", buffer, key); // REMOVE ME
-// }
-
     u = (struct compiler_unit *)PyObject_Calloc(1, sizeof(
                                             struct compiler_unit));
     if (!u) {
@@ -636,8 +627,6 @@ compiler_enter_scope(struct compiler *c, identifier name,
         compiler_unit_free(u);
         return 0;
     }
-
-    // printf("                             -> ste %p\n", u->u_ste); // REMOVE ME
 
     Py_INCREF(name);
     u->u_name = name;
@@ -750,7 +739,6 @@ static void
 compiler_exit_scope(struct compiler *c)
 {
     struct compiler_unit *u = compiler_pop_scope(c);
-    // printf("<< compiler_exit_scope\n"); // REMOVE ME
     compiler_unit_free(u);
 }
 
@@ -2453,10 +2441,14 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
     }
 
     struct annotations_scope_initializer saved_asi;
+    struct compiler_unit *saved_popped_scope = NULL;
+
     if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
         /* backup and temporarily overwrite u_asi */
         saved_asi = c->u->u_asi;
         SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, name, args, firstlineno, column);
+        saved_popped_scope = c->u->u_popped_annotation_scope;
+        c->u->u_popped_annotation_scope = NULL;
     }
 
     annotations_flag = compiler_visit_annotations(c, args, returns);
@@ -2469,6 +2461,7 @@ compiler_function(struct compiler *c, stmt_ty s, int is_async)
 
     if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
         c->u->u_asi = saved_asi;
+        c->u->u_popped_annotation_scope = saved_popped_scope;
     }
 
     if (!compiler_enter_scope(c, name, scope_type, (void *)s, firstlineno)) {
@@ -2516,15 +2509,17 @@ compiler_class(struct compiler *c, stmt_ty s)
 {
     PyCodeObject *co;
     PyObject *str;
-    int i, firstlineno;
+    int i, firstlineno, column;
     asdl_expr_seq *decos = s->v.ClassDef.decorator_list;
 
     if (!compiler_decorators(c, decos))
         return 0;
 
     firstlineno = s->lineno;
+    column = s->col_offset;
     if (asdl_seq_LEN(decos)) {
         firstlineno = ((expr_ty)asdl_seq_GET(decos, 0))->lineno;
+        column = ((expr_ty)asdl_seq_GET(decos, 0))->col_offset;
     }
 
     /* ultimately generate code for:
@@ -2545,9 +2540,15 @@ compiler_class(struct compiler *c, stmt_ty s)
         return 0;
     /* this block represents what we do in the new scope */
     {
+        struct annotations_scope_initializer saved_asi;
+        // struct compiler_unit *saved_popped_scope = NULL;
+
         if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
-            /* initialize the ASI in case we have annotations */
-            SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, s->v.ClassDef.name, s->v.ClassDef.body, firstlineno, 0);
+            /* backup and temporarily overwrite u_asi */
+            saved_asi = c->u->u_asi;
+            SET_ANNOTATIONS_SCOPE_INITIALIZER(c->u->u_asi, s->v.ClassDef.name, s->v.ClassDef.body, firstlineno, column);
+            // saved_popped_scope = c->u->u_popped_annotation_scope;
+            // c->u->u_popped_annotation_scope = NULL;
         }
         /* use the class name for name mangling */
         Py_INCREF(s->v.ClassDef.name);
@@ -2603,6 +2604,10 @@ compiler_class(struct compiler *c, stmt_ty s)
             ADDOP_NAME(c, LOAD_GLOBAL, globals_identifier, names);
             ADDOP_I(c, CALL_FUNCTION, 0);
             ADDOP_NAME(c, STORE_NAME, __globals__, names);
+        }
+        if (c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS) {
+            c->u->u_asi = saved_asi;
+            // c->u->u_popped_annotation_scope = saved_popped_scope;
         }
         /* Return __classcell__ if it is referenced, otherwise return None */
         if (c->u->u_ste->ste_needs_class_closure) {
@@ -3874,17 +3879,6 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         }
         break;
     }
-
-// {
-//     // TODO REMOVE ME
-//     Py_UCS4 buffer[256];
-//     buffer[0] = 0;
-
-//     PyUnicode_AsUCS4(name, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
-//     printf("compiler_nameop \"%ls\" -> scope %d -> op %d -> name %p ", buffer, scope, op, name);
-//     PyUnicode_AsUCS4(mangled, buffer, sizeof(buffer) / sizeof(buffer[0]), 1);
-//     printf("-> mangled \"%ls\"\n", buffer);
-// }
 
     assert(op);
     arg = compiler_add_o(dict, mangled);
@@ -5525,12 +5519,6 @@ compiler_annassign(struct compiler *c, stmt_ty s)
             }
             mangled = _Py_Mangle(c->u->u_private, targ->v.Name.id);
             if (generate_co_annotation_bytecode) {
-                /*
-                 * TODO:
-                 * should really use a "names" parameter
-                 * and BUILD_CONST_KEY_MAP
-                 * the way compiler_visit_annotations does it
-                 */
                 if (c->u->u_asi.names == NULL) {
                     c->u->u_asi.names = PyList_New(0);
                     if (c->u->u_asi.names == NULL)
@@ -5538,6 +5526,8 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                 }
                 VISIT(c, expr, s->v.AnnAssign.annotation);
                 PyList_Append(c->u->u_asi.names, mangled);
+                if (!compiler_pop_co_annotations_scope(c))
+                    return 0;
             } else {
                 if (c->c_future->ff_features & CO_FUTURE_ANNOTATIONS) {
                     VISIT(c, annexpr, s->v.AnnAssign.annotation)
@@ -5548,10 +5538,6 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                 ADDOP_NAME(c, LOAD_NAME, __annotations__, names);
                 ADDOP_LOAD_CONST_NEW(c, mangled);
                 ADDOP(c, STORE_SUBSCR);
-            }
-            if (generate_co_annotation_bytecode) {
-                if (!compiler_pop_co_annotations_scope(c))
-                    return 0;
             }
         }
         break;
@@ -5576,6 +5562,7 @@ compiler_annassign(struct compiler *c, stmt_ty s)
                      targ->kind);
             return 0;
     }
+    // print_nameops = 0;
     /* Annotation is evaluated last. */
     if (!s->v.AnnAssign.simple && !check_annotation(c, s)) {
         return 0;

@@ -1338,6 +1338,7 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
         VISIT_QUIT(st, 0);
     }
     struct annotations_scope_initializer saved;
+    struct _symtable_entry *saved_popped_annotations_ste;
     switch (s->kind) {
     case FunctionDef_kind:
         if (!symtable_add_def(st, s->v.FunctionDef.name, DEF_LOCAL))
@@ -1346,15 +1347,20 @@ symtable_visit_stmt(struct symtable *st, stmt_ty s)
             VISIT_SEQ(st, expr, s->v.FunctionDef.args->defaults);
         if (s->v.FunctionDef.args->kw_defaults)
             VISIT_SEQ_WITH_NULL(st, expr, s->v.FunctionDef.args->kw_defaults);
-        saved = st->st_cur->ste_asi;
         if (st->st_future && (st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+            saved = st->st_cur->ste_asi;
+            saved_popped_annotations_ste = st->st_cur->ste_popped_annotations_ste;
             SET_ANNOTATIONS_SCOPE_INITIALIZER(st->st_cur->ste_asi, s->v.FunctionDef.name, s->v.FunctionDef.args, s->lineno, s->col_offset);
+            st->st_cur->ste_popped_annotations_ste = NULL;
         }
         if (!symtable_visit_annotations(st, s->v.FunctionDef.args,
                                         s->v.FunctionDef.returns,
                                         s->v.FunctionDef.name))
             VISIT_QUIT(st, 0);
-        st->st_cur->ste_asi = saved;
+        if (st->st_future && (st->st_future->ff_features & CO_FUTURE_CO_ANNOTATIONS)) {
+            st->st_cur->ste_asi = saved;
+            st->st_cur->ste_popped_annotations_ste = saved_popped_annotations_ste;
+        }
         if (s->v.FunctionDef.decorator_list)
             VISIT_SEQ(st, expr, s->v.FunctionDef.decorator_list);
         if (!symtable_enter_block(st, s->v.FunctionDef.name,

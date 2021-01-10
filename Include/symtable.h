@@ -40,6 +40,7 @@ struct annotations_scope_initializer {
     (asi).ast      = (void *)_ast; \
     (asi).line     = _line; \
     (asi).column   = _column; \
+    (asi).names    = NULL; \
 
 #define CLEAR_ANNOTATIONS_SCOPE_INITIALIZER(asi) \
     Py_CLEAR((asi).basename); \

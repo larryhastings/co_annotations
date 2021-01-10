@@ -541,7 +541,6 @@ func_get_co_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 static int
 func_set_co_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
-    assert(op->func_co_annotations);
     assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
     if (value == NULL) {
         PyErr_SetString(PyExc_TypeError,

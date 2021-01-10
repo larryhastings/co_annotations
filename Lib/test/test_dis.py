@@ -1262,8 +1262,8 @@ class C:
   9          32 LOAD_CONST               6 (None)
              34 STORE_NAME               6 (me)
 
- 11          36 LOAD_CONST              12 ((3, 'foo', None, None))
-             38 LOAD_CONST               7 (""") + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""")
+ 11          36 LOAD_CONST              13 ((3, 'foo', None, None))
+             38 LOAD_CONST               7 (""") + code_object_re("fn.__co_annotations__") + quote_parens(""")
              40 LOAD_CONST               8 (""") + code_object_re("fn") + quote_parens(""")
              42 LOAD_CONST               9 ('fn')
              44 MAKE_FUNCTION           17 (defaults, co_annotations)
@@ -1276,8 +1276,10 @@ class C:
              56 LOAD_CONST              11 ('C')
              58 CALL_FUNCTION            2
              60 STORE_NAME               8 (C)
-             62 LOAD_CONST               6 (None)
-             64 RETURN_VALUE
+             62 LOAD_CONST              12 (""") + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""")
+             64 STORE_NAME               9 (__co_annotations__)
+             66 LOAD_CONST               6 (None)
+             68 RETURN_VALUE
 
 Disassembly of """) + code_object_re("indirect") + quote_parens(""":
   4           0 LOAD_GLOBAL              0 (float)
@@ -1288,26 +1290,16 @@ Disassembly of """) + code_object_re("indirect") + quote_parens(""":
              10 BINARY_SUBSCR
              12 RETURN_VALUE
 
-Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""":
-  6           0 LOAD_GLOBAL              0 (int)
-
-  7           2 LOAD_GLOBAL              1 (str)
-
-  8           4 LOAD_GLOBAL              2 (C)
-
-  9           6 LOAD_GLOBAL              3 (indirect)
-              8 LOAD_CONST               0 (0)
+Disassembly of """) + code_object_re("fn.__co_annotations__") + quote_parens(""":
+ 11           0 LOAD_GLOBAL              0 (int)
+              2 LOAD_GLOBAL              1 (str)
+              4 LOAD_GLOBAL              2 (C)
+              6 LOAD_GLOBAL              3 (indirect)
+              8 LOAD_CONST               0 (1)
              10 CALL_FUNCTION            1
-
- 11          12 LOAD_GLOBAL              0 (int)
-             14 LOAD_GLOBAL              1 (str)
-             16 LOAD_GLOBAL              2 (C)
-             18 LOAD_GLOBAL              3 (indirect)
-             20 LOAD_CONST               1 (1)
-             22 CALL_FUNCTION            1
-             24 LOAD_CONST               2 (('fna', 'fnb', 'fnc', 'fne'))
-             26 BUILD_CONST_KEY_MAP      4
-             28 RETURN_VALUE
+             12 LOAD_CONST               1 (('fna', 'fnb', 'fnc', 'fne'))
+             14 BUILD_CONST_KEY_MAP      4
+             16 RETURN_VALUE
 
 Disassembly of """) + code_object_re("fn") + quote_parens(""":
  12           0 LOAD_CONST               0 (None)
@@ -1352,6 +1344,19 @@ Disassembly of """) + code_object_re("C.__co_annotations__") + quote_parens(""":
              14 BUILD_CONST_KEY_MAP      4
              16 RETURN_VALUE
 
+Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""":
+  6           0 LOAD_GLOBAL              0 (int)
+
+  7           2 LOAD_GLOBAL              1 (str)
+
+  8           4 LOAD_GLOBAL              2 (C)
+
+  9           6 LOAD_GLOBAL              3 (indirect)
+              8 LOAD_CONST               0 (0)
+             10 CALL_FUNCTION            1
+             12 LOAD_CONST               1 (('ma', 'mb', 'mc', 'me'))
+             14 BUILD_CONST_KEY_MAP      4
+             16 RETURN_VALUE
 
 
 """.rstrip())

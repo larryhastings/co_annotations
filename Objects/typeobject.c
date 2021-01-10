@@ -910,8 +910,8 @@ type_get_annotations(PyTypeObject *type, void *context)
     /*
     ** bug-for-bug compatibility!
     ** if neither __annotations__ nor __co_annotations__
-    ** is set on us, we need to inherit it (them) from
-    ** our bases.
+    ** is set (to a useful value) on us, we need to inherit
+    ** it (them) from our bases.
     **
     ** I remind you, gentle reader, that
     **    kls.__mro__[0] == kls
@@ -923,31 +923,49 @@ type_get_annotations(PyTypeObject *type, void *context)
 
             PyObject *annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___annotations__);
             PyObject *co_annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___co_annotations__);
-            assert(!(annotations && co_annotations));
+            int co_annotations_is_set = co_annotations && (co_annotations != Py_None);
+            assert(!(annotations && co_annotations_is_set));
             if (annotations) {
                 Py_INCREF(annotations);
                 return annotations;
             }
-            if (co_annotations) {
+            if (co_annotations_is_set) {
+                PyObject *decref_me = NULL;
+                PyObject *callable = NULL;
                 PyObject *globals = _PyDict_GetItemId(kls->tp_dict, &PyId___globals__);
-                if (globals) {
-                    PyObject *fn = PyFunction_New(co_annotations, globals);
-                    if (fn) {
-                        PyObject *annotations = PyObject_CallFunction(fn, NULL);
-                        Py_DECREF(fn);
-                        if (annotations) {
-                            if (PyDict_Check(annotations)) {
-                                _PyDict_SetItemId(kls->tp_dict, &PyId___annotations__, annotations);
-                                _PyDict_DelItemId(kls->tp_dict, &PyId___co_annotations__);
-                                // we don't need to incref here:
-                                // pydict_setitem takes a reference
-                                // so we're returning the reference we got from PyObject_CallFunction
-                                return annotations;
-                            }
+
+                if (PyCallable_Check(co_annotations)) {
+                    callable = co_annotations;
+                }
+                else if (PyCode_Check(co_annotations)) {
+                    if (globals) {
+                        if (PyDict_Check(globals)) {
+                            decref_me = callable = PyFunction_New(co_annotations, globals);
+                        }
+                    }
+                }
+
+                if (callable) {
+                    PyObject *annotations = PyObject_CallFunction(callable, NULL);
+                    if (annotations) {
+                        if (PyDict_Check(annotations)) {
+                            _PyDict_SetItemId(kls->tp_dict, &PyId___annotations__, annotations);
+                            _PyDict_DelItemId(kls->tp_dict, &PyId___co_annotations__);
+                            if (globals)
+                                _PyDict_DelItemId(kls->tp_dict, &PyId___globals__);
+                            PyType_Modified(type);
+                            // we don't need to incref here:
+                            // pydict_setitem takes a reference
+                            // so we're returning the reference we got from PyObject_CallFunction
+                            return_value = annotations;
+                        } else {
                             Py_DECREF(annotations);
                         }
                     }
-                    Py_DECREF(globals);
+                }
+                Py_XDECREF(decref_me);
+                if (return_value) {
+                    break;
                 }
             }
         }
@@ -964,21 +982,81 @@ type_get_annotations(PyTypeObject *type, void *context)
 static int
 type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
 {
-    _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
-    PyErr_Clear();
-
-    if (value) {
+    if (!value) {
+        if (_PyDict_GetItemId(type->tp_dict, &PyId___annotations__)) {
+            _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
+            return 0;
+        }
+        PyErr_Format(PyExc_AttributeError, "__annotations__");
+        return -1;
+    }
+    if (PyDict_Check(value)) {
         _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, value);
+        if (_PyDict_GetItemId(type->tp_dict, &PyId___co_annotations__))
+            _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
+        if (_PyDict_GetItemId(type->tp_dict, &PyId___globals__))
+            _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
+        PyType_Modified(type);
         return 0;
     }
-
-    if (_PyDict_GetItemId(type->tp_dict, &PyId___annotations__)) {
-        _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
-        return 0;
-    }
-
-    PyErr_Format(PyExc_AttributeError, "__annotations__");
+    PyErr_SetString(
+        PyExc_TypeError,
+        "__annotations__ must be a dict");
     return -1;
+}
+
+
+static PyObject *
+type_get_co_annotations(PyTypeObject *type, void *context)
+{
+    PyObject *co_annotations = _PyDict_GetItemId(type->tp_dict, &PyId___co_annotations__);
+    if (!co_annotations) {
+        co_annotations = Py_None;
+        Py_INCREF(Py_None);
+    } else if (PyCode_Check(co_annotations)) {
+        PyObject *globals = _PyDict_GetItemId(type->tp_dict, &PyId___globals__);
+        if (!(globals && PyDict_Check(globals))) {
+            PyErr_Format(PyExc_AttributeError, "__globals__");
+            return NULL;
+        }
+        PyObject *callable = PyFunction_New(co_annotations, globals);
+        if (!callable) {
+            PyErr_Format(PyExc_AttributeError, "__co_annotations__");
+            return NULL;
+        }
+        co_annotations = callable;
+        _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, callable);
+        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
+        PyType_Modified(type);
+    } else {
+        assert((co_annotations == Py_None) || PyCallable_Check(co_annotations));
+        Py_INCREF(co_annotations);
+    }
+
+    return co_annotations;
+}
+
+static int
+type_set_co_annotations(PyTypeObject *type, PyObject *value, void *context)
+{
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "can't delete __co_annotations__ attribute");
+        return -1;
+    }
+    if (!(PyCallable_Check(value) || (value == Py_None))) {
+        PyErr_SetString(PyExc_TypeError,
+            "__co_annotations__ must be set to a callable or None");
+        return -1;
+    }
+    _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, value);
+    if (_PyDict_GetItemId(type->tp_dict, &PyId___globals__))
+        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
+    if ((value != Py_None)
+        && _PyDict_GetItemId(type->tp_dict, &PyId___annotations__))
+        _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
+    PyType_Modified(type);
+    return 0;
 }
 
 static int
@@ -1034,6 +1112,7 @@ static PyGetSetDef type_getsets[] = {
     {"__doc__", (getter)type_get_doc, (setter)type_set_doc, NULL},
     {"__text_signature__", (getter)type_get_text_signature, NULL, NULL},
     {"__annotations__", (getter)type_get_annotations, (setter)type_set_annotations, NULL},
+    {"__co_annotations__", (getter)type_get_co_annotations, (setter)type_set_co_annotations, NULL},
     {0}
 };
 
