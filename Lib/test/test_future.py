@@ -514,6 +514,16 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
     def test_class(self):
         self._test(future_co_annotations.MyType)
 
+    def test_class_annotations_inheritance(self):
+        class A:
+            a_int:int=3
+            a_str:str="foo"
+
+        class B(A):
+            pass
+
+        self.assertDictEqual(B.__annotations__, {'a_int': int, 'a_str': str})
+
     def test_module(self):
         self._test(future_co_annotations)
 

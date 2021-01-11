@@ -489,7 +489,12 @@ static PyObject *
 func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
     assert(op->func_co_annotations);
-    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
+    if (op->func_annotations && (op->func_co_annotations != Py_None)) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "__annotations__ and __co_annotations__ are both set simultaneously");
+        return NULL;
+    }
     if (ensure_annotations(op))
         return NULL;
     if (op->func_annotations == NULL) {
@@ -505,7 +510,12 @@ static int
 func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
     assert(op->func_co_annotations);
-    assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
+    if (!((op->func_co_annotations == Py_None) || PyCallable_Check(op->func_co_annotations))) {
+        PyErr_SetString(
+            PyExc_RuntimeError,
+            "__co_annotations__ is somehow neither None nor a callable");
+        return -1;
+    }
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_annotations.

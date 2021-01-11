@@ -924,7 +924,12 @@ type_get_annotations(PyTypeObject *type, void *context)
             PyObject *annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___annotations__);
             PyObject *co_annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___co_annotations__);
             int co_annotations_is_set = co_annotations && (co_annotations != Py_None);
-            assert(!(annotations && co_annotations_is_set));
+            if (annotations && co_annotations_is_set) {
+                PyErr_SetString(
+                    PyExc_RuntimeError,
+                    "__annotations__ and __co_annotations__ are both set simultaneously");
+                return NULL;
+            }
             if (annotations) {
                 Py_INCREF(annotations);
                 return annotations;
@@ -990,7 +995,10 @@ type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
         PyErr_Format(PyExc_AttributeError, "__annotations__");
         return -1;
     }
-    if (PyDict_Check(value)) {
+    // bug-for-bug compatibility: Python lets you set values of
+    // any type as cls.__annotations__.
+    // if (PyDict_Check(value)) {
+    {
         _PyDict_SetItemId(type->tp_dict, &PyId___annotations__, value);
         if (_PyDict_GetItemId(type->tp_dict, &PyId___co_annotations__))
             _PyDict_DelItemId(type->tp_dict, &PyId___co_annotations__);
@@ -999,10 +1007,10 @@ type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
         PyType_Modified(type);
         return 0;
     }
-    PyErr_SetString(
-        PyExc_TypeError,
-        "__annotations__ must be a dict");
-    return -1;
+    // PyErr_SetString(
+    //     PyExc_TypeError,
+    //     "__annotations__ must be a dict");
+    // return -1;
 }
 
 
@@ -1029,7 +1037,12 @@ type_get_co_annotations(PyTypeObject *type, void *context)
         _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
         PyType_Modified(type);
     } else {
-        assert((co_annotations == Py_None) || PyCallable_Check(co_annotations));
+        if (!((co_annotations == Py_None) || PyCallable_Check(co_annotations))) {
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                "__co_annotations__ is somehow neither None nor a callable");
+            return NULL;
+        }
         Py_INCREF(co_annotations);
     }
 
