@@ -1,3 +1,4 @@
+from __future__ import co_annotations
 """
 Define names for built-in types that aren't directly accessible as a builtin.
 """
@@ -292,6 +293,12 @@ def coroutine(func):
 
     return wrapped
 
+
+def f(x: undefined):
+    pass
+
+AnnotationName = type(f.__annotations__["x"])
+del f
 
 GenericAlias = type(list[int])
 Union = type(int | str)
