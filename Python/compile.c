@@ -1182,6 +1182,7 @@ stack_effect(int opcode, int oparg, int jump)
             return -1;
 
         case LOAD_GLOBAL:
+        case LOAD_ANNOTATION_GLOBAL:
             return 1;
 
         /* Exception handling */
@@ -3866,7 +3867,7 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         return 1;
     case OP_GLOBAL:
         switch (ctx) {
-        case Load: op = LOAD_GLOBAL; break;
+        case Load: op = LOAD_ANNOTATION_GLOBAL; break; // TODO maybe LOAD_ANNOTATION_GLOBAL
         case Store: op = STORE_GLOBAL; break;
         case Del: op = DELETE_GLOBAL; break;
         }

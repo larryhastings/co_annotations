@@ -213,5 +213,6 @@ def_op('LIST_EXTEND', 162)
 def_op('SET_UPDATE', 163)
 def_op('DICT_MERGE', 164)
 def_op('DICT_UPDATE', 165)
+name_op('LOAD_ANNOTATION_GLOBAL', 166)
 
 del def_op, name_op, jrel_op, jabs_op

@@ -995,6 +995,11 @@ All of the following opcodes use their arguments.
    Loads the global named ``co_names[namei]`` onto the stack.
 
 
+.. opcode:: LOAD_ANNOTATION_GLOBAL (namei)
+
+   Like ``LOAD_GLOBAL``, but does not throw ``NameError`` on failure.
+
+
 .. opcode:: SETUP_FINALLY (delta)
 
    Pushes a try block from a try-finally or try-except clause onto the block
