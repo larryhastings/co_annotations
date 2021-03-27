@@ -1175,6 +1175,9 @@
     <ClCompile Include="..\Python\context.c">
       <Filter>Python</Filter>
     </ClCompile>
+    <ClCompile Include="..\Objects\annotationnameobject.c">
+      <Filter>Objects</Filter>
+    </ClCompile>
     <ClCompile Include="..\Objects\genericaliasobject.c">
       <Filter>Objects</Filter>
     </ClCompile>

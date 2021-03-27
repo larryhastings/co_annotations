@@ -406,6 +406,7 @@ OBJECT_OBJS=	\
 		Objects/enumobject.o \
 		Objects/exceptions.o \
 		Objects/genericaliasobject.o \
+		Objects/annotationnameobject.o \
 		Objects/genobject.o \
 		Objects/fileobject.o \
 		Objects/floatobject.o \

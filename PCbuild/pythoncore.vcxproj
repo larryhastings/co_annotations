@@ -373,6 +373,7 @@
     <ClCompile Include="..\Modules\_winapi.c" />
     <ClCompile Include="..\Objects\abstract.c" />
     <ClCompile Include="..\Objects\accu.c" />
+    <ClCompile Include="..\Objects\annotationnameobject.c" />
     <ClCompile Include="..\Objects\boolobject.c" />
     <ClCompile Include="..\Objects\bytearrayobject.c" />
     <ClCompile Include="..\Objects\bytes_methods.c" />
