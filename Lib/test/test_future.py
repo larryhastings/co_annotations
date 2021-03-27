@@ -390,9 +390,13 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
         self.assertEqual(o.__co_annotations__, value)
         self.assertIsInstance(o.__annotations__, dict)
         self.assertIsNone(o.__co_annotations__)
-        for name, value in o.__annotations__.items():
-            self.assertIsInstance(value, type)
-            self.assertEqual(name.partition("_")[2], value.__name__)
+        for full_name, value in o.__annotations__.items():
+            name = full_name.partition("_")[2]
+            if name == "undef":
+                self.assertIsInstance(value, types.AnnotationName)
+            else:
+                self.assertIsInstance(value, type)
+            self.assertEqual(name, value.__name__)
 
         # setting __co_annotations__ to a function should work as expected
         o.__co_annotations__ = pre_dict_able

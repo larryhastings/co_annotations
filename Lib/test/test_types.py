@@ -713,6 +713,12 @@ class TypesTests(unittest.TestCase):
         assert repr(int | None) == "int | None"
         assert repr(int | typing.GenericAlias(list, int)) == "int | list[int]"
 
+    def test_annotation_name(self):
+        an = types.AnnotationName("x")
+        self.assertEqual(repr(an), "<unresolved name: x>")
+        self.assertEqual(an.__name__, "x")
+        self.assertRaises(TypeError, types.AnnotationName, 1)
+
     def test_ellipsis_type(self):
         self.assertIsInstance(Ellipsis, types.EllipsisType)
 

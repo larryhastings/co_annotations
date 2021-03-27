@@ -96,6 +96,10 @@ an_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
         return NULL;
     }
     PyObject *name = PyTuple_GET_ITEM(args, 0);
+    if (!PyUnicode_Check(name)) {
+        PyErr_SetString(PyExc_TypeError, "name must be a string");
+        return NULL;
+    }
     return Py_AnnotationName(name);
 }
 
