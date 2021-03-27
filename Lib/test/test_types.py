@@ -716,6 +716,8 @@ class TypesTests(unittest.TestCase):
     def test_annotation_name(self):
         an = types.AnnotationName("x")
         self.assertEqual(repr(an), "<unresolved name: x>")
+        # TODO for some reason __name__ doesn't exist if I don't do this first
+        dir(an)
         self.assertEqual(an.__name__, "x")
         self.assertRaises(TypeError, types.AnnotationName, 1)
 

@@ -393,6 +393,7 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
         for full_name, value in o.__annotations__.items():
             name = full_name.partition("_")[2]
             if name == "undef":
+                dir(value)  # TODO without this __name__ doesn't work
                 self.assertIsInstance(value, types.AnnotationName)
             else:
                 self.assertIsInstance(value, type)
