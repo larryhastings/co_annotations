@@ -505,7 +505,8 @@ class DisTests(unittest.TestCase):
         for opcode, opname in enumerate(dis.opname):
             if opname in ('BUILD_MAP_UNPACK_WITH_CALL',
                           'BUILD_TUPLE_UNPACK_WITH_CALL',
-                          'JUMP_IF_NOT_EXC_MATCH'):
+                          'JUMP_IF_NOT_EXC_MATCH',
+                          'LOAD_ANNOTATION_GLOBAL'):
                 continue
             with self.subTest(opname=opname):
                 width = dis._OPNAME_WIDTH
@@ -1291,10 +1292,10 @@ Disassembly of """) + code_object_re("indirect") + quote_parens(""":
              12 RETURN_VALUE
 
 Disassembly of """) + code_object_re("fn.__co_annotations__") + quote_parens(""":
- 11           0 LOAD_GLOBAL              0 (int)
-              2 LOAD_GLOBAL              1 (str)
-              4 LOAD_GLOBAL              2 (C)
-              6 LOAD_GLOBAL              3 (indirect)
+ 11           0 LOAD_ANNOTATION_GLOBAL     0 (int)
+              2 LOAD_ANNOTATION_GLOBAL     1 (str)
+              4 LOAD_ANNOTATION_GLOBAL     2 (C)
+              6 LOAD_ANNOTATION_GLOBAL     3 (indirect)
               8 LOAD_CONST               0 (1)
              10 CALL_FUNCTION            1
              12 LOAD_CONST               1 (('fna', 'fnb', 'fnc', 'fne'))
@@ -1331,13 +1332,13 @@ Disassembly of """) + code_object_re("C") + quote_parens(""":
              36 RETURN_VALUE
 
 Disassembly of """) + code_object_re("C.__co_annotations__") + quote_parens(""":
- 15           0 LOAD_GLOBAL              0 (int)
+ 15           0 LOAD_ANNOTATION_GLOBAL     0 (int)
 
- 16           2 LOAD_GLOBAL              1 (str)
+ 16           2 LOAD_ANNOTATION_GLOBAL     1 (str)
 
- 17           4 LOAD_GLOBAL              2 (C)
+ 17           4 LOAD_ANNOTATION_GLOBAL     2 (C)
 
- 18           6 LOAD_GLOBAL              3 (indirect)
+ 18           6 LOAD_ANNOTATION_GLOBAL     3 (indirect)
               8 LOAD_CONST               0 (2)
              10 CALL_FUNCTION            1
              12 LOAD_CONST               1 (('ca', 'cb', 'cc', 'ce'))
@@ -1345,13 +1346,13 @@ Disassembly of """) + code_object_re("C.__co_annotations__") + quote_parens(""":
              16 RETURN_VALUE
 
 Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote_parens(""":
-  6           0 LOAD_GLOBAL              0 (int)
+  6           0 LOAD_ANNOTATION_GLOBAL     0 (int)
 
-  7           2 LOAD_GLOBAL              1 (str)
+  7           2 LOAD_ANNOTATION_GLOBAL     1 (str)
 
-  8           4 LOAD_GLOBAL              2 (C)
+  8           4 LOAD_ANNOTATION_GLOBAL     2 (C)
 
-  9           6 LOAD_GLOBAL              3 (indirect)
+  9           6 LOAD_ANNOTATION_GLOBAL     3 (indirect)
               8 LOAD_CONST               0 (0)
              10 CALL_FUNCTION            1
              12 LOAD_CONST               1 (('ma', 'mb', 'mc', 'me'))
@@ -1362,7 +1363,7 @@ Disassembly of """) + code_object_re("fakemodule.py.__co_annotations__") + quote
 """.rstrip())
         regex = regex + "\n"
 
-        s =" ".join(dis_output.split("\n"))
+        s = " ".join(dis_output.split("\n"))
         r = " ".join(regex.split("\n"))
         self.assertRegex(s, r)
 
