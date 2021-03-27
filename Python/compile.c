@@ -3793,7 +3793,7 @@ inplace_binop(operator_ty op)
 static int
 compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
 {
-    int op, scope;
+    int op, scope, is_annotation;
     Py_ssize_t arg;
     enum { OP_FAST, OP_GLOBAL, OP_DEREF, OP_NAME } optype;
 
@@ -3813,7 +3813,8 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
 
     op = 0;
     optype = OP_NAME;
-    if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
+    is_annotation = c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION;
+    if (is_annotation) {
         /* force all lookups in co_annotation functions to be GLOBAL */
         optype = OP_GLOBAL;
     } else {
@@ -3867,7 +3868,7 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         return 1;
     case OP_GLOBAL:
         switch (ctx) {
-        case Load: op = LOAD_ANNOTATION_GLOBAL; break; // TODO maybe LOAD_ANNOTATION_GLOBAL
+        case Load: op = is_annotation ? LOAD_ANNOTATION_GLOBAL : LOAD_GLOBAL; break;
         case Store: op = STORE_GLOBAL; break;
         case Del: op = DELETE_GLOBAL; break;
         }
