@@ -249,6 +249,9 @@ static int compiler_async_comprehension_generator(
                                       asdl_comprehension_seq *generators, int gen_index,
                                       int depth,
                                       expr_ty elt, expr_ty val, int type);
+static int
+compiler_emit_co_annotations_object(struct compiler *c, PyCodeObject *co, const char *variety);
+
 
 static PyCodeObject *assemble(struct compiler *, int addNone);
 static PyObject *__doc__, *__annotations__, *__co_annotations__, *__globals__, *globals_identifier;
@@ -1996,9 +1999,8 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
             Py_CLEAR(c->u->u_asi.names);
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
-            if (!compiler_check_co_annotations_is_legal(c, co, "module"))
+            if (compiler_emit_co_annotations_object(c, co, "module"))
                 return 0;
-            ADDOP_LOAD_CONST(c, (PyObject*)co);
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
         }
         break;
@@ -2108,6 +2110,22 @@ compiler_make_closure(struct compiler *c, PyCodeObject *co, Py_ssize_t flags, Py
     ADDOP_I(c, MAKE_FUNCTION, flags);
     return 1;
 }
+
+static int
+compiler_emit_co_annotations_object(struct compiler *c, PyCodeObject *co, const char *variety)
+{
+    if (!compiler_check_co_annotations_is_legal(c, co, variety))
+        return 0;
+
+    Py_ssize_t free = PyCode_GetNumFree(co);
+    if (free) {
+        compiler_make_closure(c, co, 0, c->u->u_name);
+    } else {
+        ADDOP_LOAD_CONST(c, (PyObject *)co);
+    }
+    return 1;
+}
+
 
 static int
 compiler_decorators(struct compiler *c, asdl_expr_seq* decos)
@@ -2294,9 +2312,8 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty return
         ADDOP(c, RETURN_VALUE);
         PyCodeObject *co = assemble(c, 0);
         compiler_exit_co_annotations_scope(c);
-        if (!compiler_check_co_annotations_is_legal(c, co, "function"))
+        if (!compiler_emit_co_annotations_object(c, co, "function"))
             return 0;
-        ADDOP_LOAD_CONST(c, (PyObject*)co);
         return_value = annotations_fn_flag;
     }
 
@@ -2597,9 +2614,8 @@ compiler_class(struct compiler *c, stmt_ty s)
 
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
-            if (!compiler_check_co_annotations_is_legal(c, co, "class"))
+            if (!compiler_emit_co_annotations_object(c, co, "class"))
                 return 0;
-            ADDOP_LOAD_CONST(c, (PyObject*)co);
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
             ADDOP_NAME(c, LOAD_GLOBAL, globals_identifier, names);
             ADDOP_I(c, CALL_FUNCTION, 0);
@@ -3812,39 +3828,34 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
 
     op = 0;
     optype = OP_NAME;
-    if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
-        /* force all lookups in co_annotation functions to be GLOBAL */
-        optype = OP_GLOBAL;
-    } else {
-        scope = PyST_GetScope(c->u->u_ste, mangled);
-        switch (scope) {
-        case FREE:
-            dict = c->u->u_freevars;
-            optype = OP_DEREF;
-            break;
-        case CELL:
-            dict = c->u->u_cellvars;
-            optype = OP_DEREF;
-            break;
-        case LOCAL:
-            if (c->u->u_ste->ste_type == FunctionBlock)
-                optype = OP_FAST;
-            break;
-        case GLOBAL_IMPLICIT:
-            if (c->u->u_ste->ste_type == FunctionBlock)
-                optype = OP_GLOBAL;
-            break;
-        case GLOBAL_EXPLICIT:
+    scope = PyST_GetScope(c->u->u_ste, mangled);
+    switch (scope) {
+    case FREE:
+        dict = c->u->u_freevars;
+        optype = OP_DEREF;
+        break;
+    case CELL:
+        dict = c->u->u_cellvars;
+        optype = OP_DEREF;
+        break;
+    case LOCAL:
+        if (c->u->u_ste->ste_type == FunctionBlock)
+            optype = OP_FAST;
+        break;
+    case GLOBAL_IMPLICIT:
+        if (c->u->u_ste->ste_type == FunctionBlock)
             optype = OP_GLOBAL;
-            break;
-        default:
-            /* scope can be 0 */
-            break;
-        }
-
-        /* XXX Leave assert here, but handle __doc__ and the like better */
-        assert(scope || PyUnicode_READ_CHAR(name, 0) == '_');
+        break;
+    case GLOBAL_EXPLICIT:
+        optype = OP_GLOBAL;
+        break;
+    default:
+        /* scope can be 0 */
+        break;
     }
+
+    /* XXX Leave assert here, but handle __doc__ and the like better */
+    assert(scope || PyUnicode_READ_CHAR(name, 0) == '_');
 
     switch (optype) {
     case OP_DEREF:

@@ -1223,7 +1223,7 @@ symtable_add_def_helper(struct symtable *st, PyObject *name, int flag, struct _s
     if (flag & DEF_PARAM) {
         if (PyList_Append(ste->ste_varnames, mangled) < 0)
             goto error;
-    } else if ((flag & DEF_GLOBAL) && (!(flag & USE))) {
+    } else if (flag & DEF_GLOBAL) {
         /* XXX need to update DEF_GLOBAL for other flags too;
            perhaps only DEF_FREE_GLOBAL */
         val = flag;
@@ -1848,17 +1848,14 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
         break;
     case Name_kind:
     {
-        int flag;
         if (st->st_cur->ste_is_co_annotation_block) {
             if (e->v.Name.ctx != Load) {
                 PyErr_SetString(PyExc_SyntaxError, "walrus operator (:=) is illegal inside annotation");
                 VISIT_QUIT(st, 0);
             }
-            flag = DEF_GLOBAL | USE;
-        } else {
-            flag = (e->v.Name.ctx == Load) ? USE : DEF_LOCAL;
         }
-       if (!symtable_add_def(st, e->v.Name.id, flag))
+        if (!symtable_add_def(st, e->v.Name.id,
+                              e->v.Name.ctx == Load ? USE : DEF_LOCAL))
             VISIT_QUIT(st, 0);
         /* Special-case super: it counts as a use of __class__ */
         if (e->v.Name.ctx == Load &&
