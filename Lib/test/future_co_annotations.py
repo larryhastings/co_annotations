@@ -11,3 +11,9 @@ class MyType:
     kls_int:int=3
     kls_str:str="foo"
     kls_MyType:MyType=None
+
+
+class Nested:
+    alias = int
+    def f(self, x: alias):
+        pass

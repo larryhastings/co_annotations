@@ -82,6 +82,7 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
 
     if (st->st_cur != NULL &&
         (st->st_cur->ste_nested ||
+         // TODO and AnnotationBlock?
          st->st_cur->ste_type == FunctionBlock))
         ste->ste_nested = 1;
     ste->ste_child_free = 0;
@@ -780,6 +781,7 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
 {
     PyObject *name, *v, *local = NULL, *scopes = NULL, *newbound = NULL;
     PyObject *newglobal = NULL, *newfree = NULL, *allfree = NULL;
+    PyObject *classglobal = NULL, *classbound = NULL;
     PyObject *temp;
     int i, success = 0;
     Py_ssize_t pos = 0;
@@ -813,6 +815,12 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     newbound = PySet_New(NULL);
     if (!newbound)
         goto error;
+    classglobal = PySet_New(NULL);
+    if (!classglobal)
+        goto error;
+    classbound = PySet_New(NULL);
+    if (!classbound)
+        goto error;
 
     /* Class namespace has no effect on names visible in
        nested functions, so populate the global and bound
@@ -821,13 +829,13 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
      */
     if (ste->ste_type == ClassBlock) {
         /* Pass down known globals */
-        temp = PyNumber_InPlaceOr(newglobal, global);
+        temp = PyNumber_InPlaceOr(classglobal, global);
         if (!temp)
             goto error;
         Py_DECREF(temp);
         /* Pass down previously bound symbols */
         if (bound) {
-            temp = PyNumber_InPlaceOr(newbound, bound);
+            temp = PyNumber_InPlaceOr(classbound, bound);
             if (!temp)
                 goto error;
             Py_DECREF(temp);
@@ -842,32 +850,33 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     }
 
     /* Populate global and bound sets to be passed to children. */
-    if (ste->ste_type != ClassBlock) {
-        /* Add function locals to bound set */
-        if (ste->ste_type == FunctionBlock) {
-            temp = PyNumber_InPlaceOr(newbound, local);
-            if (!temp)
-                goto error;
-            Py_DECREF(temp);
-        }
-        /* Pass down previously bound symbols */
-        if (bound) {
-            temp = PyNumber_InPlaceOr(newbound, bound);
-            if (!temp)
-                goto error;
-            Py_DECREF(temp);
-        }
-        /* Pass down known globals */
-        temp = PyNumber_InPlaceOr(newglobal, global);
+    /* Add function locals to bound set */
+    if (ste->ste_type == FunctionBlock || ste->ste_type == AnnotationBlock) {
+        temp = PyNumber_InPlaceOr(newbound, local);
         if (!temp)
             goto error;
         Py_DECREF(temp);
     }
-    else {
+    /* Pass down previously bound symbols */
+    if (bound) {
+        temp = PyNumber_InPlaceOr(newbound, bound);
+        if (!temp)
+            goto error;
+        Py_DECREF(temp);
+    }
+    /* Pass down known globals */
+    temp = PyNumber_InPlaceOr(newglobal, global);
+    if (!temp)
+        goto error;
+    Py_DECREF(temp);
+
+    if (ste->ste_type == ClassBlock) {
         /* Special-case __class__ */
         if (!GET_IDENTIFIER(__class__))
             goto error;
         if (PySet_Add(newbound, __class__) < 0)
+            goto error;
+        if (PySet_Add(classbound, __class__) < 0)
             goto error;
     }
 
@@ -885,7 +894,10 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
         PySTEntryObject* entry;
         assert(c && PySTEntry_Check(c));
         entry = (PySTEntryObject*)c;
-        if (!analyze_child_block(entry, newbound, newfree, newglobal,
+        int use_class_globals = ste->ste_type == ClassBlock && entry->ste_type != AnnotationBlock;
+        PyObject *childglobal = use_class_globals ? classglobal : newglobal;
+        PyObject *childbound = use_class_globals ? classbound : newbound;
+        if (!analyze_child_block(entry, childbound, newfree, childglobal,
                                  allfree))
             goto error;
         /* Check if any children have free variables */
@@ -899,7 +911,8 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     Py_DECREF(temp);
 
     /* Check if any local variables must be converted to cell variables */
-    if (ste->ste_type == FunctionBlock && !analyze_cells(scopes, newfree))
+    if ((ste->ste_type == FunctionBlock || ste->ste_type == AnnotationBlock)
+        && !analyze_cells(scopes, newfree))
         goto error;
     else if (ste->ste_type == ClassBlock && !drop_class_free(ste, newfree))
         goto error;
@@ -920,6 +933,8 @@ analyze_block(PySTEntryObject *ste, PyObject *bound, PyObject *free,
     Py_XDECREF(newglobal);
     Py_XDECREF(newfree);
     Py_XDECREF(allfree);
+    Py_XDECREF(classbound);
+    Py_XDECREF(classglobal);
     if (!success)
         assert(PyErr_Occurred());
     // printf("<< analyze_block ste %p done.\n", ste); // REMOVE ME
@@ -1103,7 +1118,7 @@ symtable_enter_co_annotations_block(struct symtable *st)
 
     if (!symtable_enter_block(st,
             name_dot_co_annotations,
-            FunctionBlock,
+            AnnotationBlock,
             cur->ste_asi.ast,
             cur->ste_asi.line,
             cur->ste_asi.column)) {
@@ -1665,7 +1680,7 @@ symtable_extend_namedexpr_scope(struct symtable *st, expr_ty e)
         }
 
         /* If we find a FunctionBlock entry, add as GLOBAL/LOCAL or NONLOCAL/LOCAL */
-        if (ste->ste_type == FunctionBlock) {
+        if (ste->ste_type == FunctionBlock || ste->ste_type == AnnotationBlock) {
             long target_in_scope = _PyST_GetSymbol(ste, target_name);
             if (target_in_scope & DEF_GLOBAL) {
                 if (!symtable_add_def(st, target_name, DEF_GLOBAL))
