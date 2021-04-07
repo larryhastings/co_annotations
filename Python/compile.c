@@ -3843,7 +3843,8 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
             optype = OP_FAST;
         break;
     case GLOBAL_IMPLICIT:
-        if (c->u->u_ste->ste_type == FunctionBlock)
+        if (c->u->u_ste->ste_type == FunctionBlock ||
+                c->u->u_ste->ste_type == AnnotationBlock)
             optype = OP_GLOBAL;
         break;
     case GLOBAL_EXPLICIT:
@@ -5253,6 +5254,8 @@ compiler_visit_expr1(struct compiler *c, expr_ty e)
 {
     switch (e->kind) {
     case NamedExpr_kind:
+        if (c->u->u_ste->ste_type == AnnotationBlock)
+            return compiler_error(c, ":= in annotation");
         VISIT(c, expr, e->v.NamedExpr.value);
         ADDOP(c, DUP_TOP);
         VISIT(c, expr, e->v.NamedExpr.target);
@@ -6104,7 +6107,7 @@ compute_code_flags(struct compiler *c)
 {
     PySTEntryObject *ste = c->u->u_ste;
     int flags = 0;
-    if (ste->ste_type == FunctionBlock) {
+    if (ste->ste_type == FunctionBlock || ste->ste_type == AnnotationBlock) {
         flags |= CO_NEWLOCALS | CO_OPTIMIZED;
         if (ste->ste_nested)
             flags |= CO_NESTED;

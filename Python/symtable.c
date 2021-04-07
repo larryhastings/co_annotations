@@ -82,8 +82,8 @@ ste_new(struct symtable *st, identifier name, _Py_block_ty block,
 
     if (st->st_cur != NULL &&
         (st->st_cur->ste_nested ||
-         // TODO and AnnotationBlock?
-         st->st_cur->ste_type == FunctionBlock))
+         st->st_cur->ste_type == FunctionBlock ||
+         st->st_cur->ste_type == AnnotationBlock))
         ste->ste_nested = 1;
     ste->ste_child_free = 0;
     ste->ste_generator = 0;
