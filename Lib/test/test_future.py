@@ -527,6 +527,11 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
     def test_module(self):
         self._test(future_co_annotations)
 
+    def test_class_scoping(self):
+        self.assertEqual(
+            future_co_annotations.Nested.f.__annotations__,
+            {"x": int}
+        )
 
 
 if __name__ == "__main__":

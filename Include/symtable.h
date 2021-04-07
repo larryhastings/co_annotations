@@ -11,7 +11,7 @@ extern "C" {
  *                names.
  */
 
-typedef enum _block_type { FunctionBlock, ClassBlock, ModuleBlock }
+typedef enum _block_type { FunctionBlock, ClassBlock, ModuleBlock, AnnotationBlock }
     _Py_block_ty;
 
 struct _symtable_entry;
