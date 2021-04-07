@@ -1999,7 +1999,7 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
             Py_CLEAR(c->u->u_asi.names);
             PyCodeObject *co = assemble(c, 0);
             compiler_exit_co_annotations_scope(c);
-            if (compiler_emit_co_annotations_object(c, co, "module"))
+            if (!compiler_emit_co_annotations_object(c, co, "module"))
                 return 0;
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
         }
