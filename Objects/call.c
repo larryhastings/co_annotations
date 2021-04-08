@@ -381,6 +381,20 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
     PyObject *name = ((PyFunctionObject *)func) -> func_name;
     PyObject *qualname = ((PyFunctionObject *)func) -> func_qualname;
 
+    PyObject *locals;
+    /* did this so I can put a breakpoint on it.
+    ** yes, if this is checked in, you can just change it to
+
+    PyObject *locals = ((PyFunctionObject *)func) -> func_co_annotations_dict;
+
+    **
+    */
+    if (((PyFunctionObject *)func) -> func_co_annotations_dict) {
+        locals = ((PyFunctionObject *)func) -> func_co_annotations_dict;
+    } else {
+        locals = NULL;
+    }
+
     PyObject **d;
     Py_ssize_t nd;
     if (argdefs != NULL) {
@@ -393,7 +407,7 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
         nd = 0;
     }
     return _PyEval_EvalCode(tstate,
-                (PyObject*)co, globals, (PyObject *)NULL,
+                (PyObject*)co, globals, locals,
                 stack, nargs,
                 nkwargs ? _PyTuple_ITEMS(kwnames) : NULL,
                 stack + nargs,

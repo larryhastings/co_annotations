@@ -168,6 +168,8 @@ struct compiler_unit {
     int u_col_offset;      /* the offset of the current stmt */
 
     struct annotations_scope_initializer u_asi;
+    int u_load_name;
+    int u_load_deref;
     struct compiler_unit *u_popped_annotation_scope;
 };
 
@@ -249,8 +251,20 @@ static int compiler_async_comprehension_generator(
                                       asdl_comprehension_seq *generators, int gen_index,
                                       int depth,
                                       expr_ty elt, expr_ty val, int type);
+/*
+** compiler_emit_co_annotations_object() does three kinda-disparate things,
+** all lumped together:
+**   * it assembles the code object,
+**   * it exits the co_annotation scope, and
+**   * it emits bytecode such that the co_annotation thing (code object or
+**     function object) is left on top of the stack.
+**
+** why?
+**   a) every time we call it, we do all three of those things anyway.
+**   b) it needs to examine the co_annotation scope before it gets popped.
+*/
 static int
-compiler_emit_co_annotations_object(struct compiler *c, PyCodeObject *co, const char *variety);
+compiler_emit_co_annotations_object(struct compiler *c, const char *variety);
 
 
 static PyCodeObject *assemble(struct compiler *, int addNone);
@@ -673,6 +687,7 @@ compiler_enter_scope(struct compiler *c, identifier name,
 
     INIT_ANNOTATIONS_SCOPE_INITIALIZER(u->u_asi);
     u->u_popped_annotation_scope = NULL;
+    u->u_load_name = u->u_load_deref = 0;
 
     u->u_consts = PyDict_New();
     if (!u->u_consts) {
@@ -1997,9 +2012,7 @@ compiler_mod(struct compiler *c, mod_ty mod, PyObject *filename)
             ADDOP_I(c, BUILD_CONST_KEY_MAP, len);
             ADDOP(c, RETURN_VALUE);
             Py_CLEAR(c->u->u_asi.names);
-            PyCodeObject *co = assemble(c, 0);
-            compiler_exit_co_annotations_scope(c);
-            if (!compiler_emit_co_annotations_object(c, co, "module"))
+            if (!compiler_emit_co_annotations_object(c, "module"))
                 return 0;
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
         }
@@ -2112,16 +2125,29 @@ compiler_make_closure(struct compiler *c, PyCodeObject *co, Py_ssize_t flags, Py
 }
 
 static int
-compiler_emit_co_annotations_object(struct compiler *c, PyCodeObject *co, const char *variety)
+compiler_emit_co_annotations_object(struct compiler *c, const char *variety)
 {
+    PyCodeObject *co = assemble(c, 0);
+
     if (!compiler_check_co_annotations_is_legal(c, co, variety))
         return 0;
 
-    Py_ssize_t free = PyCode_GetNumFree(co);
-    if (free) {
-        compiler_make_closure(c, co, 0, c->u->u_name);
+    int uses_load_name = c->u->u_load_name;
+    int uses_load_deref = c->u->u_load_deref;
+
+    compiler_exit_co_annotations_scope(c);
+
+    int is_class_block = c->u->u_ste->ste_type == ClassBlock;
+    int flags = (uses_load_name && is_class_block) ? 0x20 : 0;
+
+    if (uses_load_deref) {
+        compiler_make_closure(c, co, flags, c->u->u_name);
     } else {
         ADDOP_LOAD_CONST(c, (PyObject *)co);
+        if (flags) {
+            ADDOP_LOAD_CONST(c, co->co_name);
+            ADDOP_I(c, MAKE_FUNCTION, flags);
+        }
     }
     return 1;
 }
@@ -2310,9 +2336,7 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty return
 
     if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
         ADDOP(c, RETURN_VALUE);
-        PyCodeObject *co = assemble(c, 0);
-        compiler_exit_co_annotations_scope(c);
-        if (!compiler_emit_co_annotations_object(c, co, "function"))
+        if (!compiler_emit_co_annotations_object(c, "function"))
             return 0;
         return_value = annotations_fn_flag;
     }
@@ -2612,9 +2636,7 @@ compiler_class(struct compiler *c, stmt_ty s)
             ADDOP(c, RETURN_VALUE);
             Py_CLEAR(c->u->u_asi.names);
 
-            PyCodeObject *co = assemble(c, 0);
-            compiler_exit_co_annotations_scope(c);
-            if (!compiler_emit_co_annotations_object(c, co, "class"))
+            if (!compiler_emit_co_annotations_object(c, "class"))
                 return 0;
             ADDOP_NAME(c, STORE_NAME, __co_annotations__, names);
             ADDOP_NAME(c, LOAD_GLOBAL, globals_identifier, names);
@@ -3843,8 +3865,7 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
             optype = OP_FAST;
         break;
     case GLOBAL_IMPLICIT:
-        if (c->u->u_ste->ste_type == FunctionBlock ||
-                c->u->u_ste->ste_type == AnnotationBlock)
+        if (c->u->u_ste->ste_type == FunctionBlock)
             optype = OP_GLOBAL;
         break;
     case GLOBAL_EXPLICIT:
@@ -3863,6 +3884,7 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         switch (ctx) {
         case Load:
             op = (c->u->u_ste->ste_type == ClassBlock) ? LOAD_CLASSDEREF : LOAD_DEREF;
+            c->u->u_load_deref = 1;
             break;
         case Store: op = STORE_DEREF; break;
         case Del: op = DELETE_DEREF; break;
@@ -3885,7 +3907,7 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         break;
     case OP_NAME:
         switch (ctx) {
-        case Load: op = LOAD_NAME; break;
+        case Load: op = LOAD_NAME; c->u->u_load_name = 1; break;
         case Store: op = STORE_NAME; break;
         case Del: op = DELETE_NAME; break;
         }
@@ -6108,7 +6130,11 @@ compute_code_flags(struct compiler *c)
     PySTEntryObject *ste = c->u->u_ste;
     int flags = 0;
     if (ste->ste_type == FunctionBlock || ste->ste_type == AnnotationBlock) {
-        flags |= CO_NEWLOCALS | CO_OPTIMIZED;
+        if (ste->ste_type == FunctionBlock)
+            flags |= CO_NEWLOCALS | CO_OPTIMIZED;
+        else if (ste->ste_type == AnnotationBlock)
+            flags |= CO_OPTIMIZED;
+
         if (ste->ste_nested)
             flags |= CO_NESTED;
         if (ste->ste_generator && !ste->ste_coroutine)

@@ -51,6 +51,7 @@ PyFunction_NewWithQualName(PyObject *code, PyObject *globals, PyObject *qualname
     op->func_annotations = NULL;
 
     op->func_co_annotations = Py_None;
+    op->func_co_annotations_dict = NULL;
     Py_INCREF(Py_None);
 
     /* __module__: If module name is in globals, use it.
@@ -709,6 +710,7 @@ func_clear(PyFunctionObject *op)
     Py_CLEAR(op->func_annotations);
     Py_CLEAR(op->func_qualname);
     Py_CLEAR(op->func_co_annotations);
+    Py_CLEAR(op->func_co_annotations_dict);
     return 0;
 }
 
@@ -745,6 +747,7 @@ func_traverse(PyFunctionObject *f, visitproc visit, void *arg)
     Py_VISIT(f->func_annotations);
     Py_VISIT(f->func_qualname);
     Py_VISIT(f->func_co_annotations);
+    Py_VISIT(f->func_co_annotations_dict);
     return 0;
 }
 
