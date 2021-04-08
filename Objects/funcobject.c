@@ -564,7 +564,9 @@ func_set_co_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(i
     }
     Py_XINCREF(value);
     Py_XSETREF(op->func_co_annotations, value);
-    Py_CLEAR(op->func_annotations);
+    if (value != Py_None) {
+        Py_CLEAR(op->func_annotations);
+    }
     return 0;
 }
 
