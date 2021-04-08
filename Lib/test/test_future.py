@@ -509,7 +509,7 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
         self._test(future_co_annotations.fn)
 
         del future_co_annotations.fn.__annotations__
-        assert future_co_annotations.fn.__annotations__ == {}
+        self.assertEqual(future_co_annotations.fn.__annotations__, {})
 
     def test_class(self):
         self._test(future_co_annotations.MyType)
@@ -532,6 +532,33 @@ class CoAnnotationsFutureTestCase(unittest.TestCase):
             future_co_annotations.Nested.f.__annotations__,
             {"x": int}
         )
+
+    def test_closure_and_classvar(self):
+        C = future_co_annotations.closure_and_classvars()
+
+        co1 = C.method1.__co_annotations__
+        co2 = C.method2.__co_annotations__
+        co3 = C.method3.__co_annotations__
+        co4 = C.method4.__co_annotations__
+        co5 = C.method5.__co_annotations__
+
+        self.assertEqual(C.method1.__annotations__, {'p1': 'a1'})
+        self.assertEqual(C.method2.__annotations__, {'p2': 'a2'})
+        self.assertEqual(C.method3.__annotations__, {'p3': 'a3'})
+        self.assertEqual(C.method4.__annotations__, {'p4': 'a4'})
+        self.assertEqual(C.method5.__annotations__, {'p5': int})
+
+        self.assertFalse(co1)
+        self.assertFalse(co2)
+        self.assertTrue(co3)
+        self.assertTrue(co4)
+        self.assertTrue(co5)
+
+        self.assertFalse(C.method1.__co_annotations__)
+        self.assertFalse(C.method2.__co_annotations__)
+        self.assertFalse(C.method3.__co_annotations__)
+        self.assertFalse(C.method4.__co_annotations__)
+        self.assertFalse(C.method5.__co_annotations__)
 
 
 if __name__ == "__main__":

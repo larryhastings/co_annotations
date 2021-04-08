@@ -2141,7 +2141,7 @@ compiler_emit_co_annotations_object(struct compiler *c, const char *variety)
     int flags = (uses_load_name && is_class_block) ? 0x20 : 0;
 
     if (uses_load_deref) {
-        compiler_make_closure(c, co, flags, c->u->u_name);
+        compiler_make_closure(c, co, flags, co->co_name);
     } else {
         ADDOP_LOAD_CONST(c, (PyObject *)co);
         if (flags) {
