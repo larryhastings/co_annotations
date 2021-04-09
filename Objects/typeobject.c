@@ -924,6 +924,15 @@ type_get_annotations(PyTypeObject *type, void *context)
             PyObject *annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___annotations__);
             PyObject *co_annotations = _PyDict_GetItemId(kls->tp_dict, &PyId___co_annotations__);
             int co_annotations_is_set = co_annotations && (co_annotations != Py_None);
+            if (annotations
+                && co_annotations_is_set
+                && !Py_IS_TYPE(annotations, &PyGetSetDescr_Type)
+                && !Py_IS_TYPE(co_annotations, &PyGetSetDescr_Type)) {
+                PyErr_Format(
+                    PyExc_RuntimeError,
+                    "__annotations__ and __co_annotations__ are both set simultaneously");
+                return NULL;
+            }
             if (annotations) {
                 Py_INCREF(annotations);
                 return annotations;
@@ -1034,6 +1043,14 @@ type_get_co_annotations(PyTypeObject *type, void *context)
         _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
         PyType_Modified(type);
     } else {
+        if ((co_annotations != Py_None)
+            && !PyCallable_Check(co_annotations)
+            && !Py_IS_TYPE(co_annotations, &PyGetSetDescr_Type)) {
+            PyErr_SetString(
+                PyExc_RuntimeError,
+                "__co_annotations__ is somehow neither None nor a callable");
+            return NULL;
+        }
         Py_INCREF(co_annotations);
     }
 
