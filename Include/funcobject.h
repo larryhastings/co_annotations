@@ -34,6 +34,7 @@ typedef struct {
     PyObject *func_qualname;    /* The qualified name */
     vectorcallfunc vectorcall;
     PyObject *func_co_annotations; /* Code object that returns annotations, or NULL */
+    PyObject *func_co_annotations_dict; /* Dict object for co_annotations NAME lookups, or NULL */
 
     /* Invariant:
      *     func_closure contains the bindings for func_code->co_freevars, so

@@ -3847,6 +3847,10 @@ main_loop:
                 assert(PyTuple_CheckExact(TOP()));
                 func ->func_closure = POP();
             }
+            if (oparg & 0x20) {
+                Py_INCREF(f->f_locals);
+                func->func_co_annotations_dict = f->f_locals;
+            }
             if (oparg & 0x10) {
                 assert(TOP()->ob_type == &PyCode_Type);
                 func->func_co_annotations = POP();
