@@ -3849,7 +3849,7 @@ main_loop:
             }
             if (oparg & 0x20) {
                 Py_INCREF(f->f_locals);
-                func->func_co_annotations_dict = f->f_locals;
+                func->func_locals = f->f_locals;
             }
             if (oparg & 0x10) {
                 assert(TOP()->ob_type == &PyCode_Type);

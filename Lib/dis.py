@@ -24,7 +24,7 @@ FORMAT_VALUE_CONVERTERS = (
     (ascii, 'ascii'),
 )
 MAKE_FUNCTION = opmap['MAKE_FUNCTION']
-MAKE_FUNCTION_FLAGS = ('defaults', 'kwdefaults', 'annotations', 'closure', 'co_annotations', 'co_annotations_dict')
+MAKE_FUNCTION_FLAGS = ('defaults', 'kwdefaults', 'annotations', 'closure', 'co_annotations', 'locals')
 
 
 def _try_compile(source, name):

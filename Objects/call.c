@@ -385,12 +385,12 @@ _PyFunction_Vectorcall(PyObject *func, PyObject* const* stack,
     /* did this so I can put a breakpoint on it.
     ** yes, if this is checked in, you can just change it to
 
-    PyObject *locals = ((PyFunctionObject *)func) -> func_co_annotations_dict;
+    PyObject *locals = ((PyFunctionObject *)func) -> func_locals;
 
     **
     */
-    if (((PyFunctionObject *)func) -> func_co_annotations_dict) {
-        locals = ((PyFunctionObject *)func) -> func_co_annotations_dict;
+    if (((PyFunctionObject *)func) -> func_locals) {
+        locals = ((PyFunctionObject *)func) -> func_locals;
     } else {
         locals = NULL;
     }
