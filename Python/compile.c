@@ -765,8 +765,6 @@ compiler_exit_scope(struct compiler *c)
 }
 
 
-static PyObject *dot_co_annotations = NULL;
-
 /*
  * Returns >0 if we succeeded and are currently in the annotation scope.
  * Returns  0 if there was an error.
@@ -788,20 +786,8 @@ compiler_enter_co_annotations_scope(struct compiler *c)
     int co_annotations = c->c_future->ff_features & CO_FUTURE_CO_ANNOTATIONS;
 
     if (co_annotations) {
-         if (!c->u->u_asi.basename) {
-            return -1;
-        }
-
-       if (dot_co_annotations == NULL) {
-            dot_co_annotations = PyUnicode_InternFromString(".__co_annotations__");
-            if (!dot_co_annotations)
-                return 0;
-        }
-
-        PyObject *name_dot_co_annotations = PyUnicode_Concat(c->u->u_asi.basename, dot_co_annotations);
-
         if (!compiler_enter_scope(c,
-            name_dot_co_annotations,
+            __co_annotations__,
             COMPILER_SCOPE_ANNOTATION,
             c->u->u_asi.ast,
             c->u->u_asi.line))
