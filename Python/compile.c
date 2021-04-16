@@ -6191,14 +6191,12 @@ compute_code_flags(struct compiler *c)
     return flags;
 }
 
-// Merge *tuple* with constant cache.
+// Merge *obj* with constant cache.
 // Unlike merge_consts_recursive(), this function doesn't work recursively.
 static int
-merge_const_tuple(struct compiler *c, PyObject **tuple)
+merge_const_one(struct compiler *c, PyObject **obj)
 {
-    assert(PyTuple_CheckExact(*tuple));
-
-    PyObject *key = _PyCode_ConstantKey(*tuple);
+    PyObject *key = _PyCode_ConstantKey(*obj);
     if (key == NULL) {
         return 0;
     }
@@ -6209,14 +6207,18 @@ merge_const_tuple(struct compiler *c, PyObject **tuple)
     if (t == NULL) {
         return 0;
     }
-    if (t == key) {  // tuple is new constant.
+    if (t == key) {  // obj is new constant.
         return 1;
     }
 
-    PyObject *u = PyTuple_GET_ITEM(t, 1);
-    Py_INCREF(u);
-    Py_DECREF(*tuple);
-    *tuple = u;
+    if (PyTuple_CheckExact(t)) {
+        // t is still borrowed reference
+        t = PyTuple_GET_ITEM(t, 1);
+    }
+
+    Py_INCREF(t);
+    Py_DECREF(*obj);
+    *obj = t;
     return 1;
 }
 
@@ -6246,10 +6248,10 @@ makecode(struct compiler *c, struct assembler *a, PyObject *consts)
     if (!freevars)
         goto error;
 
-    if (!merge_const_tuple(c, &names) ||
-            !merge_const_tuple(c, &varnames) ||
-            !merge_const_tuple(c, &cellvars) ||
-            !merge_const_tuple(c, &freevars))
+    if (!merge_const_one(c, &names) ||
+            !merge_const_one(c, &varnames) ||
+            !merge_const_one(c, &cellvars) ||
+            !merge_const_one(c, &freevars))
     {
         goto error;
     }
@@ -6266,7 +6268,7 @@ makecode(struct compiler *c, struct assembler *a, PyObject *consts)
     if (consts == NULL) {
         goto error;
     }
-    if (!merge_const_tuple(c, &consts)) {
+    if (!merge_const_one(c, &consts)) {
         Py_DECREF(consts);
         goto error;
     }
@@ -6329,7 +6331,7 @@ dump_basicblock(const basicblock *b)
 #endif
 
 static int
-optimize_cfg(struct assembler *a, PyObject *consts);
+optimize_cfg(struct compiler *c, struct assembler *a, PyObject *consts);
 
 static PyCodeObject *
 assemble(struct compiler *c, int addNone)
@@ -6373,7 +6375,7 @@ assemble(struct compiler *c, int addNone)
     if (consts == NULL) {
         goto error;
     }
-    if (optimize_cfg(&a, consts)) {
+    if (optimize_cfg(c, &a, consts)) {
         goto error;
     }
 
@@ -6388,10 +6390,18 @@ assemble(struct compiler *c, int addNone)
                 goto error;
     }
 
-    if (_PyBytes_Resize(&a.a_lnotab, a.a_lnotab_off) < 0)
+    if (_PyBytes_Resize(&a.a_lnotab, a.a_lnotab_off) < 0) {
         goto error;
-    if (_PyBytes_Resize(&a.a_bytecode, a.a_offset * sizeof(_Py_CODEUNIT)) < 0)
+    }
+    if (!merge_const_one(c, &a.a_lnotab)) {
         goto error;
+    }
+    if (_PyBytes_Resize(&a.a_bytecode, a.a_offset * sizeof(_Py_CODEUNIT)) < 0) {
+        goto error;
+    }
+    if (!merge_const_one(c, &a.a_bytecode)) {
+        goto error;
+    }
 
     co = makecode(c, &a, consts);
  error:
@@ -6416,7 +6426,8 @@ PyAST_Compile(mod_ty mod, const char *filename, PyCompilerFlags *flags,
    Called with codestr pointing to the first LOAD_CONST.
 */
 static int
-fold_tuple_on_constants(struct instr *inst,
+fold_tuple_on_constants(struct compiler *c,
+                        struct instr *inst,
                         int n, PyObject *consts)
 {
     /* Pre-conditions */
@@ -6441,15 +6452,27 @@ fold_tuple_on_constants(struct instr *inst,
         Py_INCREF(constant);
         PyTuple_SET_ITEM(newconst, i, constant);
     }
-    Py_ssize_t index = PyList_GET_SIZE(consts);
-    if ((size_t)index >= (size_t)INT_MAX - 1) {
+    if (merge_const_one(c, &newconst) == 0) {
         Py_DECREF(newconst);
-        PyErr_SetString(PyExc_OverflowError, "too many constants");
         return -1;
     }
-    if (PyList_Append(consts, newconst)) {
-        Py_DECREF(newconst);
-        return -1;
+
+    Py_ssize_t index;
+    for (index = 0; index < PyList_GET_SIZE(consts); index++) {
+        if (PyList_GET_ITEM(consts, index) == newconst) {
+            break;
+        }
+    }
+    if (index == PyList_GET_SIZE(consts)) {
+        if ((size_t)index >= (size_t)INT_MAX - 1) {
+            Py_DECREF(newconst);
+            PyErr_SetString(PyExc_OverflowError, "too many constants");
+            return -1;
+        }
+        if (PyList_Append(consts, newconst)) {
+            Py_DECREF(newconst);
+            return -1;
+        }
     }
     Py_DECREF(newconst);
     for (int i = 0; i < n; i++) {
@@ -6463,7 +6486,7 @@ fold_tuple_on_constants(struct instr *inst,
 
 /* Optimization */
 static int
-optimize_basic_block(basicblock *bb, PyObject *consts)
+optimize_basic_block(struct compiler *c, basicblock *bb, PyObject *consts)
 {
     assert(PyList_CheckExact(consts));
     struct instr nop;
@@ -6525,7 +6548,7 @@ optimize_basic_block(basicblock *bb, PyObject *consts)
                     break;
                 }
                 if (i >= oparg) {
-                    if (fold_tuple_on_constants(inst-oparg, oparg, consts)) {
+                    if (fold_tuple_on_constants(c, inst-oparg, oparg, consts)) {
                         goto error;
                     }
                 }
@@ -6693,10 +6716,10 @@ mark_reachable(struct assembler *a) {
 */
 
 static int
-optimize_cfg(struct assembler *a, PyObject *consts)
+optimize_cfg(struct compiler *c, struct assembler *a, PyObject *consts)
 {
     for (int i = 0; i < a->a_nblocks; i++) {
-        if (optimize_basic_block(a->a_reverse_postorder[i], consts)) {
+        if (optimize_basic_block(c, a->a_reverse_postorder[i], consts)) {
             return -1;
         }
         clean_basic_block(a->a_reverse_postorder[i]);
