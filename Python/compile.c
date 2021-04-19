@@ -5776,15 +5776,26 @@ dfs(struct compiler *c, basicblock *b, struct assembler *a, int end)
     }
 }
 
-Py_LOCAL_INLINE(void)
-stackdepth_push(basicblock ***sp, basicblock *b, int depth)
+Py_LOCAL_INLINE(int)
+stackdepth_push(basicblock ***sp, basicblock *b, int depth, basicblock ***stack, int *size)
 {
     assert(b->b_startdepth < 0 || b->b_startdepth == depth);
     if (b->b_startdepth < depth && b->b_startdepth < 100) {
         assert(b->b_startdepth < 0);
         b->b_startdepth = depth;
+        int delta = (*sp) - (*stack);
+        if (delta == (*size - 1)) {
+            *size *= 2;
+            *stack = PyObject_Realloc(*stack, *size * sizeof(basicblock *));
+            if (!*stack) {
+                PyErr_NoMemory();
+                return -1;
+            }
+            *sp = *stack + delta;
+        }
         *(*sp)++ = b;
     }
+    return 0;
 }
 
 /* Find the flow path that needs the largest stack.  We assume that
@@ -5810,7 +5821,8 @@ stackdepth(struct compiler *c)
     }
 
     sp = stack;
-    stackdepth_push(&sp, entryblock, 0);
+    if (stackdepth_push(&sp, entryblock, 0, &stack, &nblocks))
+        return -1;
     while (sp != stack) {
         b = *--sp;
         int depth = b->b_startdepth;
@@ -5836,7 +5848,8 @@ stackdepth(struct compiler *c)
                     maxdepth = target_depth;
                 }
                 assert(target_depth >= 0); /* invalid code or bug in stackdepth() */
-                stackdepth_push(&sp, instr->i_target, target_depth);
+                if (stackdepth_push(&sp, instr->i_target, target_depth, &stack, &nblocks))
+                    return -1;
             }
             depth = new_depth;
             if (instr->i_opcode == JUMP_ABSOLUTE ||
@@ -5851,7 +5864,8 @@ stackdepth(struct compiler *c)
             }
         }
         if (next != NULL) {
-            stackdepth_push(&sp, next, depth);
+            if (stackdepth_push(&sp, next, depth, &stack, &nblocks))
+                return -1;
         }
     }
     PyObject_Free(stack);
