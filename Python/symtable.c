@@ -1865,7 +1865,8 @@ symtable_visit_expr(struct symtable *st, expr_ty e)
     {
         if (st->st_cur->ste_is_co_annotation_block) {
             if (e->v.Name.ctx != Load) {
-                PyErr_SetString(PyExc_SyntaxError, "walrus operator (:=) is illegal inside annotation");
+                PyErr_SetString(PyExc_SyntaxError,
+                    ":= (the \"walrus operator\") is illegal inside an annotation");
                 VISIT_QUIT(st, 0);
             }
         }

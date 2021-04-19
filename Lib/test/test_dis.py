@@ -1227,6 +1227,7 @@ class C:
 """
         co = compile(source, "fakemodule.py", "exec")
         dis_stream = io.StringIO()
+        dis.dis(co)
         dis.dis(co, file=dis_stream)
         dis_output = dis_stream.getvalue().lstrip("\n").rstrip() + "\n"
 
@@ -1331,14 +1332,15 @@ Disassembly of """) + code_object_re("C") + quote_parens(""":
  20          28 LOAD_CONST               4 (0.0)
              30 STORE_NAME               9 (cf)
              32 LOAD_CONST               5 (""") + code_object_re("C.__co_annotations__") + quote_parens(""")
-             34 LOAD_CONST               6 ('C.__co_annotations__')
-             36 MAKE_FUNCTION           32 (co_annotations_dict)
-             38 STORE_NAME              10 (__co_annotations__)
-             40 LOAD_GLOBAL             11 (globals)
-             42 CALL_FUNCTION            0
-             44 STORE_NAME              12 (__globals__)
-             46 LOAD_CONST               3 (None)
-             48 RETURN_VALUE
+             34 LOAD_GLOBAL             10 (locals)
+             36 CALL_FUNCTION            0
+             38 BUILD_TUPLE              2
+             40 STORE_NAME              11 (__co_annotations__)
+             42 LOAD_GLOBAL             12 (globals)
+             44 CALL_FUNCTION            0
+             46 STORE_NAME              13 (__globals__)
+             48 LOAD_CONST               3 (None)
+             50 RETURN_VALUE
 
 Disassembly of """) + code_object_re("C.__co_annotations__") + quote_parens(""":
  16           0 LOAD_NAME                0 (int)

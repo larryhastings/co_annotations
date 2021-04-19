@@ -206,26 +206,130 @@ PyFunction_SetClosure(PyObject *op, PyObject *closure)
 
 
 /*
-** Returns 0 on success, -1 on error.
-** success doesn't indicate whether or not we successfully
-** bound func_co_annotations, merely that we encountered no errors.
-** (func_co_annotations might be None.)
+** Binds a __co_annotations__ object to a function.  Really, just does
+** the correct thing to process a __co_annotations__ object to produce
+** the correct result.
+**
+** Returns 0 on success, -1 on failure (and sets an exception).
+**
+** "owner" should be the object storing __co_annotations__.
+**
+** "co_annotations" should be a pointer to the storage for __co_annotations__.
+** It can be any of the following things:
+**     * A code object.
+**     * None.
+**     * A function object.
+**     * A tuple, containing a code object, and either a dict,
+**       a tuple, or both.
+** (Any other value will result in an error)
+**
+** "globals" should be the globals dict to bind to, if we bind a code object
+** to a function.
+**
+** If this functions returns success, it will have done one of two things:
+**     * left *co_annotations unchanged (if it's a function object or None), or
+**     * overwritten *co_annotations with a function object.
+** If the latter, it will DECREF the value in *co_annotations before
+** overwriting it, and the caller will own the reference to the new
+** value in *co_annotations.
+**
+** Just to confirm: if this function returns success, then co_annotations
+** will either contain
+**     * a function object, or
+**     * Py_None.
+** So if it's not Py_None, you can call it.  Guaranteed!
 */
-static inline int
-bind_co_annotations(PyFunctionObject *func)
+int
+PyFunction_BindCoAnnotations(PyObject *owner, PyObject **co_annotations, PyObject *globals)
 {
-    assert(func->func_co_annotations);
-    if (func->func_co_annotations == Py_None)
+    assert(co_annotations);
+    PyObject *co_a = *co_annotations;
+    if ((co_a == Py_None) || PyCallable_Check(co_a))
         return 0;
-    if (PyCode_Check(func->func_co_annotations)) {
-        PyObject *fn = PyFunction_New(func->func_co_annotations, func->func_globals);
-        if (!fn)
-            return -1;
-        Py_DECREF(func->func_co_annotations);
-        func->func_co_annotations = fn;
-        return 0;
+
+    PyObject *co = NULL;
+    PyObject *class_dict = NULL;
+    PyObject *closure = NULL;
+    if (PyCode_Check(co_a)) {
+        co = co_a;
+    } else if (PyTuple_Check(co_a)) {
+        PyObject *tuple = co_a;
+        Py_ssize_t length = PyTuple_GET_SIZE(tuple);
+        for (int i = 0; i < length; i++) {
+            PyObject *o = PyTuple_GET_ITEM(tuple, i);
+            if (PyCode_Check(o)) {
+                if (co != NULL) {
+                    PyErr_Format(PyExc_ValueError,
+                                 "%R __co_annotations__ tuple contains two code objects",
+                                 owner);
+                    return -1;
+                }
+                co = o;
+            } else if (PyDict_Check(o)) {
+                if (class_dict != NULL) {
+                    PyErr_Format(PyExc_ValueError,
+                                 "%R __co_annotations__ tuple contains two dict objects",
+                                 owner);
+                    return -1;
+                }
+                class_dict = o;
+            } else if (PyTuple_Check(o)) {
+                if (closure != NULL) {
+                    PyErr_Format(PyExc_ValueError,
+                                 "%R __co_annotations__ tuple contains two tuple objects",
+                                 owner);
+                    return -1;
+                }
+                closure = o;
+            } else {
+                PyErr_Format(PyExc_ValueError,
+                             "%R __co_annotations__ tuple contains an unexpected object: %R",
+                             owner, o);
+                return -1;
+            }
+        }
+    } else {
+        PyErr_Format(PyExc_ValueError,
+                     "%R __co_annotations__ set to an unexpected object: %R",
+                     owner, co_a);
+        return -1;
     }
-    return PyCallable_Check(func->func_co_annotations) ? 0 : -1;
+
+    if (co == NULL) {
+        PyErr_Format(PyExc_ValueError,
+                     "%R __co_annotations__: couldn't locate code object",
+                     owner);
+        return -1;
+    }
+
+    if (globals == NULL) {
+        PyErr_Format(PyExc_ValueError,
+                     "%R __co_annotations__ is unbound but we don't have globals",
+                     owner);
+        return -1;
+    }
+
+    PyFunctionObject *fn = (PyFunctionObject *)PyFunction_New(co, globals);
+    if (!fn) {
+        PyErr_Format(PyExc_ValueError,
+                     "%R __co_annotations__ couldn't bind function object",
+                     owner);
+        return -1;
+    }
+
+    if (class_dict) {
+        fn->func_locals = class_dict;
+        Py_INCREF(class_dict);
+    }
+
+    if (closure) {
+        fn->func_closure = closure;
+        Py_INCREF(closure);
+    }
+
+    Py_DECREF(co_a);
+    *co_annotations = (PyObject *)fn;
+    return 0;
 }
 
 
@@ -241,7 +345,7 @@ ensure_annotations(PyFunctionObject *func)
     assert(func->func_co_annotations);
     if (func->func_annotations)
         return 0;
-    if (bind_co_annotations(func))
+    if (PyFunction_BindCoAnnotations((PyObject *)func, &(func->func_co_annotations), func->func_globals))
         return -1;
     if (func->func_co_annotations != Py_None) {
         PyObject *annotations = PyObject_CallFunction(func->func_co_annotations, NULL);
@@ -512,10 +616,12 @@ static int
 func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
     assert(op->func_co_annotations);
-    if (!((op->func_co_annotations == Py_None) || PyCallable_Check(op->func_co_annotations))) {
+    if (!((op->func_co_annotations == Py_None)
+        || PyCallable_Check(op->func_co_annotations)
+        || PyTuple_Check(op->func_co_annotations))) {
         PyErr_SetString(
             PyExc_RuntimeError,
-            "__co_annotations__ is somehow neither None nor a callable");
+            "__co_annotations__ is somehow neither None nor a callable nor a tuple");
         return -1;
     }
     if (value == Py_None)
@@ -544,7 +650,7 @@ func_get_co_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 {
     assert(op->func_co_annotations);
     assert(!((op->func_annotations != NULL) && (op->func_co_annotations != Py_None)));
-    if (bind_co_annotations(op))
+    if (PyFunction_BindCoAnnotations((PyObject *)op, &(op->func_co_annotations), op->func_globals))
         return NULL;
     Py_INCREF(op->func_co_annotations);
     return op->func_co_annotations;

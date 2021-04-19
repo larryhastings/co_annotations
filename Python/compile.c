@@ -169,7 +169,6 @@ struct compiler_unit {
 
     struct annotations_scope_initializer u_asi;
     int u_load_name;
-    int u_load_deref;
     struct compiler_unit *u_popped_annotation_scope;
 };
 
@@ -257,7 +256,7 @@ static int compiler_async_comprehension_generator(
 **   * it assembles the code object,
 **   * it exits the co_annotation scope, and
 **   * it emits bytecode such that the co_annotation thing (code object or
-**     function object) is left on top of the stack.
+**     tuple) is left on top of the stack.
 **
 ** why?
 **   a) every time we call it, we do all three of those things anyway.
@@ -268,7 +267,7 @@ compiler_emit_co_annotations_object(struct compiler *c, const char *variety);
 
 
 static PyCodeObject *assemble(struct compiler *, int addNone);
-static PyObject *__doc__, *__annotations__, *__co_annotations__, *__globals__, *globals_identifier;
+static PyObject *__doc__, *__annotations__, *__co_annotations__, *__globals__, *globals_identifier, *locals_identifier;
 
 #define CAPSULE_NAME "compile.c compiler unit"
 
@@ -391,6 +390,11 @@ PyAST_CompileObject(mod_ty mod, PyObject *filename, PyCompilerFlags *flags,
     if (!globals_identifier) {
         globals_identifier = PyUnicode_InternFromString("globals");
         if (!globals_identifier)
+            return NULL;
+    }
+    if (!locals_identifier) {
+        locals_identifier = PyUnicode_InternFromString("locals");
+        if (!locals_identifier)
             return NULL;
     }
     if (!compiler_init(&c))
@@ -687,7 +691,7 @@ compiler_enter_scope(struct compiler *c, identifier name,
 
     INIT_ANNOTATIONS_SCOPE_INITIALIZER(u->u_asi);
     u->u_popped_annotation_scope = NULL;
-    u->u_load_name = u->u_load_deref = 0;
+    u->u_load_name = 0;
 
     u->u_consts = PyDict_New();
     if (!u->u_consts) {
@@ -2077,47 +2081,55 @@ compiler_lookup_arg(PyObject *dict, PyObject *name)
     return PyLong_AS_LONG(v);
 }
 
+static Py_ssize_t
+compiler_make_closure_tuple(struct compiler *c, PyCodeObject *co)
+{
+    Py_ssize_t i, free = PyCode_GetNumFree(co);
+    if (!free)
+        return 0;
+
+    for (i = 0; i < free; ++i) {
+        /* Bypass com_addop_varname because it will generate
+           LOAD_DEREF but LOAD_CLOSURE is needed.
+        */
+        PyObject *name = PyTuple_GET_ITEM(co->co_freevars, i);
+        int arg, reftype;
+
+        /* Special case: If a class contains a method with a
+           free variable that has the same name as a method,
+           the name will be considered free *and* local in the
+           class.  It should be handled by the closure, as
+           well as by the normal name lookup logic.
+        */
+        reftype = get_ref_type(c, name);
+        if (reftype == CELL)
+            arg = compiler_lookup_arg(c->u->u_cellvars, name);
+        else /* (reftype == FREE) */
+            arg = compiler_lookup_arg(c->u->u_freevars, name);
+        if (arg == -1) {
+            _Py_FatalErrorFormat(__func__,
+                "lookup %s in %s %d %d\n"
+                "freevars of %s: %s\n",
+                PyUnicode_AsUTF8(PyObject_Repr(name)),
+                PyUnicode_AsUTF8(c->u->u_name),
+                reftype, arg,
+                PyUnicode_AsUTF8(co->co_name),
+                PyUnicode_AsUTF8(PyObject_Repr(co->co_freevars)));
+        }
+        ADDOP_I(c, LOAD_CLOSURE, arg);
+    }
+    ADDOP_I(c, BUILD_TUPLE, free);
+    return 0x08;
+}
+
 static int
 compiler_make_closure(struct compiler *c, PyCodeObject *co, Py_ssize_t flags, PyObject *qualname)
 {
-    Py_ssize_t i, free = PyCode_GetNumFree(co);
     if (qualname == NULL)
         qualname = co->co_name;
 
-    if (free) {
-        for (i = 0; i < free; ++i) {
-            /* Bypass com_addop_varname because it will generate
-               LOAD_DEREF but LOAD_CLOSURE is needed.
-            */
-            PyObject *name = PyTuple_GET_ITEM(co->co_freevars, i);
-            int arg, reftype;
+    flags |= compiler_make_closure_tuple(c, co);
 
-            /* Special case: If a class contains a method with a
-               free variable that has the same name as a method,
-               the name will be considered free *and* local in the
-               class.  It should be handled by the closure, as
-               well as by the normal name lookup logic.
-            */
-            reftype = get_ref_type(c, name);
-            if (reftype == CELL)
-                arg = compiler_lookup_arg(c->u->u_cellvars, name);
-            else /* (reftype == FREE) */
-                arg = compiler_lookup_arg(c->u->u_freevars, name);
-            if (arg == -1) {
-                _Py_FatalErrorFormat(__func__,
-                    "lookup %s in %s %d %d\n"
-                    "freevars of %s: %s\n",
-                    PyUnicode_AsUTF8(PyObject_Repr(name)),
-                    PyUnicode_AsUTF8(c->u->u_name),
-                    reftype, arg,
-                    PyUnicode_AsUTF8(co->co_name),
-                    PyUnicode_AsUTF8(PyObject_Repr(co->co_freevars)));
-            }
-            ADDOP_I(c, LOAD_CLOSURE, arg);
-        }
-        flags |= 0x08;
-        ADDOP_I(c, BUILD_TUPLE, free);
-    }
     ADDOP_LOAD_CONST(c, (PyObject*)co);
     ADDOP_LOAD_CONST(c, qualname);
     ADDOP_I(c, MAKE_FUNCTION, flags);
@@ -2133,22 +2145,27 @@ compiler_emit_co_annotations_object(struct compiler *c, const char *variety)
         return 0;
 
     int uses_load_name = c->u->u_load_name;
-    int uses_load_deref = c->u->u_load_deref;
 
     compiler_exit_co_annotations_scope(c);
 
     int is_class_block = c->u->u_ste->ste_type == ClassBlock;
-    int flags = (uses_load_name && is_class_block) ? 0x20 : 0;
+    int needs_class_dict = (uses_load_name && is_class_block);
 
-    if (uses_load_deref) {
-        compiler_make_closure(c, co, flags, co->co_name);
-    } else {
-        ADDOP_LOAD_CONST(c, (PyObject *)co);
-        if (flags) {
-            ADDOP_LOAD_CONST(c, co->co_name);
-            ADDOP_I(c, MAKE_FUNCTION, flags);
-        }
+    int values = 1;
+    ADDOP_LOAD_CONST(c, (PyObject *)co);
+
+    if (compiler_make_closure_tuple(c, co)) {
+        values += 1;
     }
+
+    if (needs_class_dict) {
+        ADDOP_NAME(c, LOAD_GLOBAL, locals_identifier, names);
+        ADDOP_I(c, CALL_FUNCTION, 0);
+        values += 1;
+    }
+
+    if (values > 1)
+        ADDOP_I(c, BUILD_TUPLE, values);
     return 1;
 }
 
@@ -3884,7 +3901,6 @@ compiler_nameop(struct compiler *c, identifier name, expr_context_ty ctx)
         switch (ctx) {
         case Load:
             op = (c->u->u_ste->ste_type == ClassBlock) ? LOAD_CLASSDEREF : LOAD_DEREF;
-            c->u->u_load_deref = 1;
             break;
         case Store: op = STORE_DEREF; break;
         case Del: op = DELETE_DEREF; break;

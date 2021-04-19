@@ -902,6 +902,54 @@ type_get_text_signature(PyTypeObject *type, void *context)
 }
 
 static PyObject *
+type_get_co_annotations(PyTypeObject *type, void *context)
+{
+    PyObject *original = _PyDict_GetItemId(type->tp_dict, &PyId___co_annotations__);
+    if (original == NULL) {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+
+    PyObject *globals = _PyDict_GetItemId(type->tp_dict, &PyId___globals__);
+    PyObject *co_annotations = original;
+    if (PyFunction_BindCoAnnotations((PyObject *)type, &co_annotations, globals)) {
+        return NULL;
+    }
+
+    if (co_annotations != original) {
+        _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, co_annotations);
+        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
+        PyType_Modified(type);
+    }
+
+    Py_INCREF(co_annotations);
+    return co_annotations;
+}
+
+static int
+type_set_co_annotations(PyTypeObject *type, PyObject *value, void *context)
+{
+    if (value == NULL) {
+        PyErr_SetString(PyExc_TypeError,
+            "can't delete __co_annotations__ attribute");
+        return -1;
+    }
+    if (!(PyCallable_Check(value) || (value == Py_None))) {
+        PyErr_SetString(PyExc_TypeError,
+            "__co_annotations__ must be set to a callable or None");
+        return -1;
+    }
+    _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, value);
+    if (_PyDict_GetItemId(type->tp_dict, &PyId___globals__))
+        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
+    if ((value != Py_None)
+        && _PyDict_GetItemId(type->tp_dict, &PyId___annotations__))
+        _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
+    PyType_Modified(type);
+    return 0;
+}
+
+static PyObject *
 type_get_annotations(PyTypeObject *type, void *context)
 {
     PyObject *return_value = NULL;
@@ -938,23 +986,16 @@ type_get_annotations(PyTypeObject *type, void *context)
                 return annotations;
             }
             if (co_annotations_is_set) {
-                PyObject *decref_me = NULL;
-                PyObject *callable = NULL;
                 PyObject *globals = _PyDict_GetItemId(kls->tp_dict, &PyId___globals__);
 
-                if (PyCallable_Check(co_annotations)) {
-                    callable = co_annotations;
-                }
-                else if (PyCode_Check(co_annotations)) {
-                    if (globals) {
-                        if (PyDict_Check(globals)) {
-                            decref_me = callable = PyFunction_New(co_annotations, globals);
-                        }
-                    }
+                Py_INCREF(co_annotations);
+                if (PyFunction_BindCoAnnotations((PyObject *)kls, &co_annotations, globals)) {
+                    Py_DECREF(co_annotations);
+                    return NULL;
                 }
 
-                if (callable) {
-                    PyObject *annotations = PyObject_CallFunction(callable, NULL);
+                if (co_annotations != Py_None) {
+                    PyObject *annotations = PyObject_CallFunction(co_annotations, NULL);
                     if (annotations) {
                         if (PyDict_Check(annotations)) {
                             _PyDict_SetItemId(kls->tp_dict, &PyId___annotations__, annotations);
@@ -966,15 +1007,10 @@ type_get_annotations(PyTypeObject *type, void *context)
                             // pydict_setitem takes a reference
                             // so we're returning the reference we got from PyObject_CallFunction
                             return_value = annotations;
-                        } else {
-                            Py_DECREF(annotations);
                         }
-                    } else {
-                        Py_XDECREF(decref_me);
-                        return NULL;
                     }
                 }
-                Py_XDECREF(decref_me);
+                Py_DECREF(co_annotations);
                 if (return_value) {
                     break;
                 }
@@ -1019,66 +1055,6 @@ type_set_annotations(PyTypeObject *type, PyObject *value, void *context)
     // return -1;
 }
 
-
-static PyObject *
-type_get_co_annotations(PyTypeObject *type, void *context)
-{
-    PyObject *co_annotations = _PyDict_GetItemId(type->tp_dict, &PyId___co_annotations__);
-    if (!co_annotations) {
-        co_annotations = Py_None;
-        Py_INCREF(Py_None);
-    } else if (PyCode_Check(co_annotations)) {
-        PyObject *globals = _PyDict_GetItemId(type->tp_dict, &PyId___globals__);
-        if (!(globals && PyDict_Check(globals))) {
-            PyErr_Format(PyExc_AttributeError, "__globals__");
-            return NULL;
-        }
-        PyObject *callable = PyFunction_New(co_annotations, globals);
-        if (!callable) {
-            PyErr_Format(PyExc_AttributeError, "__co_annotations__");
-            return NULL;
-        }
-        co_annotations = callable;
-        _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, callable);
-        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
-        PyType_Modified(type);
-    } else {
-        if ((co_annotations != Py_None)
-            && !PyCallable_Check(co_annotations)
-            && !Py_IS_TYPE(co_annotations, &PyGetSetDescr_Type)) {
-            PyErr_SetString(
-                PyExc_RuntimeError,
-                "__co_annotations__ is somehow neither None nor a callable");
-            return NULL;
-        }
-        Py_INCREF(co_annotations);
-    }
-
-    return co_annotations;
-}
-
-static int
-type_set_co_annotations(PyTypeObject *type, PyObject *value, void *context)
-{
-    if (value == NULL) {
-        PyErr_SetString(PyExc_TypeError,
-            "can't delete __co_annotations__ attribute");
-        return -1;
-    }
-    if (!(PyCallable_Check(value) || (value == Py_None))) {
-        PyErr_SetString(PyExc_TypeError,
-            "__co_annotations__ must be set to a callable or None");
-        return -1;
-    }
-    _PyDict_SetItemId(type->tp_dict, &PyId___co_annotations__, value);
-    if (_PyDict_GetItemId(type->tp_dict, &PyId___globals__))
-        _PyDict_DelItemId(type->tp_dict, &PyId___globals__);
-    if ((value != Py_None)
-        && _PyDict_GetItemId(type->tp_dict, &PyId___annotations__))
-        _PyDict_DelItemId(type->tp_dict, &PyId___annotations__);
-    PyType_Modified(type);
-    return 0;
-}
 
 static int
 type_set_doc(PyTypeObject *type, PyObject *value, void *context)
