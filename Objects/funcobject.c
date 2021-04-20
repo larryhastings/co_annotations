@@ -309,7 +309,11 @@ PyFunction_BindCoAnnotations(PyObject *owner, PyObject **co_annotations, PyObjec
         return -1;
     }
 
-    PyFunctionObject *fn = (PyFunctionObject *)PyFunction_New(co, globals);
+    PyObject *qualname = PyUnicode_FromFormat("%U.%s", ((PyFunctionObject*)owner)->func_qualname, "__co_annotations__");
+    if (qualname == NULL) {
+        PyErr_Clear();
+    }
+    PyFunctionObject *fn = (PyFunctionObject *)PyFunction_NewWithQualName(co, globals, qualname);
     if (!fn) {
         PyErr_Format(PyExc_ValueError,
                      "%R __co_annotations__ couldn't bind function object",
