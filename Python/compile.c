@@ -2339,6 +2339,9 @@ compiler_visit_annotations(struct compiler *c, arguments_ty args, expr_ty return
 
     if (c->u->u_scope_type == COMPILER_SCOPE_ANNOTATION) {
         ADDOP(c, RETURN_VALUE);
+        // Use -1 to share same code objects in a module.
+        // func.__co_annotations__ will overwrite it with func.__code__.co_firstlineno.
+        c->u->u_firstlineno = -1;
         if (!compiler_emit_co_annotations_object(c, "function"))
             return 0;
         return_value = annotations_fn_flag;

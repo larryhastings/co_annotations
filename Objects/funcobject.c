@@ -313,7 +313,26 @@ PyFunction_BindCoAnnotations(PyObject *owner, PyObject **co_annotations, PyObjec
     if (qualname == NULL) {
         PyErr_Clear();
     }
+    PyObject *newcode = NULL;
+    if (((PyCodeObject*)co)->co_firstlineno == -1) {
+        // copy firstlineno from owner->func_code
+        PyCodeObject *old = (PyCodeObject*)co;
+        int firstlineno = ((PyCodeObject*)((PyFunctionObject*)owner)->func_code)->co_firstlineno;
+        newcode = (PyObject*)PyCode_NewWithPosOnlyArgs(
+            old->co_argcount, old->co_posonlyargcount, old->co_kwonlyargcount, old->co_nlocals,
+            old->co_stacksize, old->co_flags, old->co_code, old->co_consts, old->co_names,
+            old->co_varnames, old->co_freevars, old->co_cellvars, old->co_filename, old->co_name,
+            firstlineno, old->co_lnotab);
+        if (newcode == NULL) {
+            PyErr_Format(PyExc_RuntimeError,
+                         "can not create code object for %R __co_annotations__",
+                         owner);
+            return -1;
+        }
+        co = newcode;
+    }
     PyFunctionObject *fn = (PyFunctionObject *)PyFunction_NewWithQualName(co, globals, qualname);
+    Py_CLEAR(newcode);
     if (!fn) {
         PyErr_Format(PyExc_ValueError,
                      "%R __co_annotations__ couldn't bind function object",
