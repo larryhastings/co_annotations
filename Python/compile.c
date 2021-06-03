@@ -1239,7 +1239,7 @@ stack_effect(int opcode, int oparg, int jump)
             return -1 - ((oparg & 0x01) != 0);
         case MAKE_FUNCTION:
             return -1 - ((oparg & 0x01) != 0) - ((oparg & 0x02) != 0) -
-                ((oparg & 0x04) != 0) - ((oparg & 0x08) != 0);
+                ((oparg & 0x04) != 0) - ((oparg & 0x08) != 0) - ((oparg & 0x10) != 0);
         case BUILD_SLICE:
             if (oparg == 3)
                 return -2;
@@ -6724,4 +6724,3 @@ PyCode_Optimize(PyObject *code, PyObject* Py_UNUSED(consts),
     Py_INCREF(code);
     return code;
 }
-
