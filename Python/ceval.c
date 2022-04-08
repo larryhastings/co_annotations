@@ -3852,7 +3852,7 @@ main_loop:
                 func->func_locals = f->f_locals;
             }
             if (oparg & 0x10) {
-                assert(TOP()->ob_type == &PyCode_Type);
+                assert(TOP()->ob_type == &PyCode_Type || TOP()->ob_type == &PyTuple_Type);
                 func->func_co_annotations = POP();
             }
             if (oparg & 0x04) {
