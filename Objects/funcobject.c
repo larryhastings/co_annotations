@@ -615,15 +615,6 @@ func_get_annotations(PyFunctionObject *op, void *Py_UNUSED(ignored))
 static int
 func_set_annotations(PyFunctionObject *op, PyObject *value, void *Py_UNUSED(ignored))
 {
-    assert(op->func_co_annotations);
-    if (!((op->func_co_annotations == Py_None)
-        || PyCallable_Check(op->func_co_annotations)
-        || PyTuple_Check(op->func_co_annotations))) {
-        PyErr_SetString(
-            PyExc_RuntimeError,
-            "__co_annotations__ is somehow neither None nor a callable nor a tuple");
-        return -1;
-    }
     if (value == Py_None)
         value = NULL;
     /* Legal to del f.func_annotations.

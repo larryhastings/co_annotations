@@ -34,3 +34,8 @@ def closure_and_classvars():
         x = method1.__annotations__
         y = method2.__annotations__
     return C
+
+def foo() -> int:
+    pass
+
+foo.__annotations__ = {"return": int}
